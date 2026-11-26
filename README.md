@@ -4,15 +4,19 @@ One-click Windows downloader for video and audio from YouTube, TikTok, Instagram
 Google Drive and 1000+ other sites. A PowerShell launcher plus a WinForms window (C#) around
 yt-dlp / ffmpeg / deno. Nothing is uploaded anywhere; everything runs on your PC.
 
+![Dawnloader](docs/screens/dawnloader-crimson.png)
+
 ## Features
+- **Clip a part** - drag the handles or type start/end times to download only a section
 - Paste links (or turn on "Catch copied links") and see title, length and estimated size before downloading
 - Video (quality + MP4/MKV/WEBM) or audio only (MP3, M4A, OPUS, FLAC, WAV or original)
-- **Clip a part** - drag the handles or type start/end times to download only a section
 - Playlists, Google Drive files and folders (including private ones), direct links
 - Skips what you already downloaded; "Show in folder" on finished rows
 - One-click fixes in the list (Update yt-dlp, Use Firefox sign-in, Retry)
 - Sign in with your browser's saved login only when a link needs it
-- Five skins: Crimson, Midnight, Glass, Sunrise, Forest
+- Five skins: Crimson, Midnight, Glass, Sunrise, Forest (Glass shown below)
+
+![Glass skin](docs/screens/dawnloader-glass.png)
 
 ## Use
 Put `Dawnloader.ps1` (from `dist/`) and `Start Dawnloader.bat` in the same folder and double-click the `.bat`.
