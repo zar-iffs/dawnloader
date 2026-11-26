@@ -848,7 +848,8 @@ namespace YTD
         }
         public static bool Url(string url)
         {
-            var m = Regex.Match(url ?? "", @"^[a-z][a-z0-9+.-]*://(?:[^/@]*@)?([^/:?#]+)", RegexOptions.IgnoreCase);
+            // the whole address part, including anything before an "@" (so name@host tricks are caught too)
+            var m = Regex.Match(url ?? "", @"^[a-z][a-z0-9+.-]*://([^/?#]+)", RegexOptions.IgnoreCase);
             return m.Success && Host(m.Groups[1].Value);
         }
         public static bool Extractor(string key)
@@ -3938,7 +3939,7 @@ namespace YTD
                 d.ShowDialog(this);
             }
         }
-        const string AppVersion = "2026.11.4";
+        const string AppVersion = "2026.11.5";
         const string GitHubUrl = "https://github.com/zar-iffs";
 
         void ShowTerms()
