@@ -11,7 +11,7 @@ yt-dlp / ffmpeg / deno. Nothing is uploaded anywhere; everything runs on your PC
 - Paste links (or turn on "Catch copied links") and see title, length and estimated size before downloading
 - Video (quality + MP4/MKV/WEBM) or audio only (MP3, M4A, OPUS, FLAC, WAV or original)
 - Playlists, Google Drive files and folders (including private ones), direct links
-- Skips what you already downloaded; "Show in folder" on finished rows
+- Skips what you already downloaded; row icons to clip, re-download, show in folder or remove
 - One-click fixes in the list (Update yt-dlp, Use Firefox sign-in, Retry)
 - Sign in with your browser's saved login only when a link needs it
 - Five skins: Crimson, Midnight, Glass, Sunrise, Forest (Glass shown below)

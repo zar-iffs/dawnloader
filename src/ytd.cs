@@ -1671,15 +1671,19 @@ namespace YTD
             lv = new ListView(); lv.View = View.Details; lv.FullRowSelect = true; lv.HeaderStyle = ColumnHeaderStyle.None; lv.BorderStyle = BorderStyle.None;
             lv.Font = T.Body; lv.SmallImageList = thumbs; lv.MultiSelect = false; lv.ShowItemToolTips = true; lv.Dock = DockStyle.Fill;
             lv.BackColor = T.Input; lv.ForeColor = T.Text; lv.OwnerDraw = true;
-            lv.Columns.Add("Title", T.P(366)); lv.Columns.Add("Length", T.P(100), HorizontalAlignment.Right);
-            lv.Columns.Add("Size (est.)", T.P(96), HorizontalAlignment.Right); lv.Columns.Add("Status", T.P(290));
+            lv.Columns.Add("Title", T.P(366)); lv.Columns.Add("Length", T.P(76), HorizontalAlignment.Right);
+            lv.Columns.Add("Size (est.)", T.P(92), HorizontalAlignment.Right); lv.Columns.Add("Status", T.P(236));
+            lv.Columns.Add("", IconColW);
             lv.DrawColumnHeader += (s, e) => { e.DrawDefault = true; };
             lv.DrawItem += (s, e) => { };
             lv.DrawSubItem += (s, e) => DrawCell(e);
             lv.MouseUp += (s, e) => { if (e.Button == MouseButtons.Left) ListClick(e.Location); };
+            lv.MouseLeave += (s, e) => { SetHotIcon(null, null); if (hotRow != null && hotRow.ListView == lv) lv.Invalidate(hotRow.Bounds); hotRow = null; };
             lv.MouseMove += (s, e) =>
             {
-                lv.Cursor = PillAt(e.Location) != null ? Cursors.Hand : Cursors.Default;
+                Item ii; string icon = IconAt(e.Location, out ii);
+                SetHotIcon(ii, icon);
+                lv.Cursor = PillAt(e.Location) != null || icon != null ? Cursors.Hand : Cursors.Default;
                 var h = lv.GetItemAt(T.P(4), e.Y);      // owner-drawn rows: repaint fully when the hot row changes (WinForms hover glitch)
                 if (h != hotRow) { if (hotRow != null && hotRow.ListView == lv) lv.Invalidate(hotRow.Bounds); if (h != null) lv.Invalidate(h.Bounds); hotRow = h; }
             };
@@ -1746,7 +1750,7 @@ namespace YTD
         void FitColumns()
         {
             if (lv == null || lv.Columns.Count < 4) return;
-            int fixedW = lv.Columns[1].Width + lv.Columns[2].Width + lv.Columns[3].Width;
+            int fixedW = lv.Columns[1].Width + lv.Columns[2].Width + lv.Columns[3].Width + (lv.Columns.Count > 4 ? lv.Columns[4].Width : 0);
             lv.Columns[0].Width = Math.Max(T.P(160), lv.Width - SystemInformation.VerticalScrollBarWidth - fixedW - T.P(8));
             if (lvHead != null) lvHead.Invalidate();
         }
@@ -1980,7 +1984,7 @@ namespace YTD
                 {
                     found = new Item(); found.Url = u; found.Title = u; found.IsPlaylist = IsPurePlaylist(u);
                     found.Kind = KindOf(u); if (found.Kind == "drive") { found.DriveId = Web.DriveId(u); found.IsPlaylist = false; found.Title = "Google Drive file"; }
-                    found.Lvi = new ListViewItem(new[] { found.Kind == "drive" ? "Google Drive file" : u, "", "", "Checking..." }); found.Lvi.ImageKey = "ph"; found.Lvi.UseItemStyleForSubItems = false;
+                    found.Lvi = new ListViewItem(new[] { found.Kind == "drive" ? "Google Drive file" : u, "", "", "Checking...", "" }); found.Lvi.ImageKey = "ph"; found.Lvi.UseItemStyleForSubItems = false;
                     found.Lvi.Tag = found; added++;
                 }
                 keep.Add(found);
@@ -2270,10 +2274,9 @@ namespace YTD
                 else SetItemStatus(it, (desc == "" ? "Ready" : desc) + extra + (it.UseCookies ? " \u00B7 signed in" : "") +
                     (InPlaylist(it) && !it.IsPlaylist ? " \u00B7 in a playlist" : ""), "", it.DonePath != null && File.Exists(it.DonePath) ? "show" : "");
             }
-            it.Lvi.ToolTipText = Regex.Split(it.Lvi.ToolTipText ?? "", "\n\n(?:Right-click|Select it to trim)")[0] +
+            it.Lvi.ToolTipText = Regex.Split(it.Lvi.ToolTipText ?? "", "\n\n(?:Right-click|Select it to trim|Use the list icon)")[0] +
                 (it.IsPlaylist && it.PlHave > 0 ? "\n" + it.PlHave + " of " + it.Count + " videos were downloaded before and will be skipped." : "") +
-                (InPlaylist(it) ? (it.IsPlaylist ? "\n\nRight-click to download only this video." : "\n\nRight-click to download the whole playlist.") :
-                 (!it.IsPlaylist && it.Kind != "drive" ? "\n\nSelect it to trim it in 'Clip a part' above." : ""));
+                (InPlaylist(it) ? (it.IsPlaylist ? "\n\nUse the list icon on the right to download only this video." : "\n\nUse the list icon on the right to download the whole playlist.") : "");
             if (it.Est < 0 && it.Kind == "other" && !it.Probed && !it.IsPlaylist) ProbeDirect(it);
         }
 
@@ -2351,6 +2354,7 @@ namespace YTD
         }
         Rectangle PillRect(Item it, Rectangle cell)
         {
+            if (it.Action == "show" || it.Action == "again") return Rectangle.Empty;   // these are row icons now
             string lab = ActionLabel(it.Action); if (lab == null) return Rectangle.Empty;
             int w = TextRenderer.MeasureText(lab, T.Small).Width + T.P(18), h = T.P(24);
             return new Rectangle(cell.Right - w - T.P(6), cell.Y + (cell.Height - h) / 2, w, h);
@@ -2361,7 +2365,117 @@ namespace YTD
             var it = hit.Tag as Item; if (it == null || it.Action == "" || (busy && it.Action != "show")) return null;
             return PillRect(it, CellRect(hit, 3)).Contains(p) ? it : null;
         }
-        void ListClick(Point p) { var it = PillAt(p); if (it != null) DoAction(it); }
+        void ListClick(Point p)
+        {
+            Item ii; string icon = IconAt(p, out ii);
+            if (icon != null) { RowIcon(ii, icon, p); return; }
+            var it = PillAt(p); if (it != null) DoAction(it);
+        }
+
+        // ---------------- row icons (right end of each row): clip, playlist choice, download again, show in folder, remove
+        static int IconColW { get { return T.P(8) + 5 * T.P(28); } }
+        ToolTip iconTip; Item hotIconItem; string hotIcon; bool iconMenuOpen;
+        // icons that apply to this row, left to right. "Show in folder" is always visible; the rest appear on hover or when the row is selected.
+        List<string> RowIcons(Item it)
+        {
+            var l = new List<string>();
+            if (it == null) return l;
+            bool free = !busy;
+            if (free && InPlaylist(it)) l.Add("list");
+            if (free && !it.IsPlaylist && it.Kind != "drive" && it.State == 2) l.Add("cut");
+            if (free && !it.ForceAgain && (it.Archived || it.Done || (it.IsPlaylist && it.PlHave > 0))) l.Add("refresh");
+            if (it.DonePath != null && File.Exists(it.DonePath)) l.Add("folder");
+            if (free) l.Add("clear");
+            return l;
+        }
+        static string IconTip(Item it, string icon)
+        {
+            switch (icon)
+            {
+                case "list": return it.IsPlaylist ? "Playlist: download all, or only this video" : "In a playlist: download only this video, or the whole list";
+                case "cut": return it.HasClip ? "Change the clip (" + Stamp(it.ClipStart) + " - " + Stamp(it.ClipEnd) + ")" : "Download only a part (clip)";
+                case "refresh": return "Download again";
+                case "folder": return "Show in folder";
+                case "clear": return "Remove from list";
+            }
+            return "";
+        }
+        bool IconsShown(ListViewItem lvi, string icon) { return icon == "folder" || lvi.Selected || lvi == hotRow; }
+        List<KeyValuePair<string, Rectangle>> IconRects(Item it, Rectangle cell)
+        {
+            var res = new List<KeyValuePair<string, Rectangle>>();
+            var icons = RowIcons(it); int sz = T.P(26), gap = T.P(2);
+            int x = cell.Right - T.P(6) - icons.Count * (sz + gap) + gap;
+            foreach (var n in icons) { res.Add(new KeyValuePair<string, Rectangle>(n, new Rectangle(x, cell.Y + (cell.Height - sz) / 2, sz, sz))); x += sz + gap; }
+            return res;
+        }
+        string IconAt(Point p, out Item item)
+        {
+            item = null;
+            if (lv.Columns.Count < 5) return null;
+            var hit = lv.GetItemAt(T.P(4), p.Y); if (hit == null) return null;
+            var it = hit.Tag as Item; if (it == null) return null;
+            foreach (var kv in IconRects(it, CellRect(hit, 4)))
+                if (kv.Value.Contains(p) && IconsShown(hit, kv.Key)) { item = it; return kv.Key; }
+            return null;
+        }
+        void SetHotIcon(Item it, string icon)
+        {
+            if (iconMenuOpen) { it = null; icon = null; }
+            if (it == hotIconItem && icon == hotIcon) return;
+            if (hotIconItem != null && hotIconItem.Lvi.ListView == lv) lv.Invalidate(hotIconItem.Lvi.Bounds);
+            hotIconItem = it; hotIcon = icon;
+            if (iconTip == null) { iconTip = new ToolTip(); iconTip.ShowAlways = true; }
+            if (it == null) { iconTip.Hide(lv); lv.ShowItemToolTips = true; return; }
+            lv.Invalidate(it.Lvi.Bounds);
+            lv.ShowItemToolTips = false;   // the row's own tooltip would cover the icon's
+            foreach (var kv in IconRects(it, CellRect(it.Lvi, 4)))
+                if (kv.Key == icon) { iconTip.Show(IconTip(it, icon), lv, kv.Value.Left, kv.Value.Bottom + T.P(4), 4000); break; }
+        }
+        void RowIcon(Item it, string icon, Point p)
+        {
+            SetHotIcon(null, null);
+            switch (icon)
+            {
+                case "cut": it.Lvi.Selected = true; FocusClip(it); break;
+                case "folder": ShowInFolder(it.DonePath); break;
+                case "refresh": it.Action = "again"; DoAction(it); break;
+                case "clear": RemoveLink(it); break;
+                case "list":
+                    {
+                        it.Lvi.Selected = true;
+                        var m = new ContextMenuStrip(); m.Font = T.Body; m.Renderer = new SkinRenderer();
+                        bool whole = it.IsPlaylist;
+                        var a = new ToolStripMenuItem("Only this video", null, (s, e) => SetPlaylist(it, false)); a.Checked = !whole;
+                        var b = new ToolStripMenuItem(IsMix(it.Url) ? "The whole YouTube Mix (auto-generated, can be long)" : "The whole playlist", null, (s, e) => SetPlaylist(it, true)); b.Checked = whole;
+                        m.Items.Add(a); m.Items.Add(b);
+                        m.Closed += (s, e) => { iconMenuOpen = false; BeginInvoke((MethodInvoker)(() => m.Dispose())); };
+                        iconMenuOpen = true;
+                        foreach (var kv in IconRects(it, CellRect(it.Lvi, 4))) if (kv.Key == "list") { m.Show(lv, new Point(kv.Value.Left, kv.Value.Bottom + T.P(2))); break; }
+                    }
+                    break;
+            }
+        }
+        void DrawIcons(Graphics g, Item it, ListViewItem lvi, Rectangle cell)
+        {
+            var k = T.Cur;
+            foreach (var kv in IconRects(it, cell))
+            {
+                if (!IconsShown(lvi, kv.Key)) continue;
+                var r = kv.Value; bool hot = it == hotIconItem && kv.Key == hotIcon;
+                bool on = (kv.Key == "cut" && it.HasClip) || (kv.Key == "list" && it.IsPlaylist);
+                if (hot || on)
+                {
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    using (var p = T.Round(new RectangleF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1, r.Height - 1), T.P(6)))
+                    using (var b = new SolidBrush(hot ? T.Solid(k.Soft) : T.Solid(k.AccentTint))) g.FillPath(b, p);
+                }
+                Color c = hot || on || kv.Key == "folder" ? k.Accent : k.Muted;
+                if (kv.Key == "clear" && hot) c = k.Bad;
+                int pad = T.P(5);
+                Icons.Draw(g, kv.Key, new RectangleF(r.X + pad, r.Y + pad, r.Width - 2 * pad, r.Width - 2 * pad), c);
+            }
+        }
 
         void DrawCell(DrawListViewSubItemEventArgs e)
         {
@@ -2390,6 +2504,7 @@ namespace YTD
                 }
                 TextRenderer.DrawText(g, e.Item.Text, lv.Font, new Rectangle(x, r.Y, r.Right - x - T.P(4), r.Height), k.Text, flags);
             }
+            else if (e.ColumnIndex == 4) { if (it != null) DrawIcons(g, it, e.Item, r); }
             else if (e.ColumnIndex == 3)
             {
                 var pr = it != null ? PillRect(it, r) : Rectangle.Empty;
@@ -2784,7 +2899,7 @@ namespace YTD
             foreach (var it in queue) { if (it.Done) ok++; else if (it.Status.StartsWith("Failed")) { failed++; if (it.Error == "blocked") blocked++; if (it.Error == "drive-signin") driveSign++; } }
             SetBusy(false);
             if (cancelAll) { SetStatus("Cancelled. " + ok + " finished.", T.Warn); bar.Value = 0; }
-            else if (failed == 0 && queue.Count == items.Count) { bar.Value = 1; SetStatus("\u2713 All done - " + ok + (ok == 1 ? " download" : " downloads") + " saved. Use 'Show in folder' on a row to find it.", T.Ok); }
+            else if (failed == 0 && queue.Count == items.Count) { bar.Value = 1; SetStatus("\u2713 All done - " + ok + (ok == 1 ? " download" : " downloads") + " saved. Click the folder icon on a row to find it.", T.Ok); }
             else
             {
                 bar.Value = 1;
