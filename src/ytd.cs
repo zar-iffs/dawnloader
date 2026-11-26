@@ -1878,7 +1878,7 @@ namespace YTD
             if (cbCookies.SelectedIndex == 5 && !File.Exists(cookiesFilePath)) cbCookies.SelectedIndex = 0;
             ckSubs.Checked = d.TryGetValue("Subs", out v) && v == "1"; ckThumb.Checked = !d.TryGetValue("Thumb", out v) || v == "1";
             ckCatch.Checked = d.TryGetValue("Catch", out v) && v == "1";
-            ckExact.Checked = d.TryGetValue("ClipExact", out v) && v == "1";
+            ckExact.Checked = false;      // Exact is never remembered: it starts off every run
         }
         void SetIdx(ChoiceRow c, Dictionary<string, string> d, string key, int def)
         {
@@ -1898,7 +1898,7 @@ namespace YTD
                     "OutDir=" + txtOut.Text, "Mode=" + (tAudio.Checked ? "Audio" : "Video"), "Quality=" + cbQuality.SelectedIndex,
                     "Container=" + cbContainer.SelectedIndex, "AFmt=" + cbAFmt.SelectedIndex, "ABr=" + cbABr.SelectedIndex,
                     "Cookies=" + cbCookies.SelectedIndex, "CookieFile=" + cookiesFilePath,
-                    "Subs=" + (ckSubs.Checked ? 1 : 0), "Thumb=" + (ckThumb.Checked ? 1 : 0), "Catch=" + (ckCatch.Checked ? 1 : 0), "ClipExact=" + (ckExact.Checked ? 1 : 0), "Skin=" + skinName });
+                    "Subs=" + (ckSubs.Checked ? 1 : 0), "Thumb=" + (ckThumb.Checked ? 1 : 0), "Catch=" + (ckCatch.Checked ? 1 : 0), "Skin=" + skinName });
             }
             catch { }
         }
@@ -3921,7 +3921,7 @@ namespace YTD
                 d.ShowDialog(this);
             }
         }
-        const string AppVersion = "2026.11.5";
+        const string AppVersion = "2026.11.6";
         const string GitHubUrl = "https://github.com/zar-iffs";
 
         void ShowTerms()
