@@ -19,7 +19,8 @@ yt-dlp / ffmpeg / deno. Nothing is uploaded anywhere; everything runs on your PC
 ![Glass skin](docs/screens/dawnloader-glass.png)
 
 ## Use
-Put `Dawnloader.ps1` (from `dist/`) and `Start Dawnloader.bat` in the same folder and double-click the `.bat`.
+Download [`releases/Dawnloader-2026.11.zip`](releases/Dawnloader-2026.11.zip), extract it, and double-click `Start Dawnloader.bat`
+(or keep `dist/Dawnloader.ps1` and `Start Dawnloader.bat` together in one folder).
 On first run the app offers to download yt-dlp, ffmpeg and deno (~180 MB, no admin) into
 `%LOCALAPPDATA%\Dawnloader\tools`.
 
