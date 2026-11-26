@@ -3609,6 +3609,52 @@ namespace YTD
         }
 
         // ---------------- about
+        // ---------------- updating Dawnloader itself (About > Check for updates)
+        static string UpdateBase { get { return Environment.GetEnvironmentVariable("YTD_UPDATE_BASE") ?? "https://raw.githubusercontent.com/zar-iffs/dawnloader/main/"; } }
+        static bool NewerVersion(string a, string b)
+        {
+            var x = a.Split('.'); var y = b.Split('.');
+            for (int i = 0; i < Math.Max(x.Length, y.Length); i++)
+            {
+                int p = 0, q = 0;
+                if (i < x.Length) int.TryParse(x[i], out p);
+                if (i < y.Length) int.TryParse(y[i], out q);
+                if (p != q) return p > q;
+            }
+            return false;
+        }
+        static byte[] UpdateBytes(string file)
+        {
+            try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; } catch { }
+            using (var wc = new WebClient())
+            {
+                wc.Headers[HttpRequestHeader.UserAgent] = "Dawnloader/" + AppVersion;
+                wc.Headers[HttpRequestHeader.CacheControl] = "no-cache";
+                return wc.DownloadData(UpdateBase + file + "?t=" + DateTime.UtcNow.Ticks);
+            }
+        }
+        static string UpdateText(string file) { return Encoding.UTF8.GetString(UpdateBytes(file)); }
+        // downloads the new Dawnloader.ps1, checks it, keeps the old one as Dawnloader.ps1.bak and swaps it in. Returns null on success, else a reason.
+        string InstallUpdate(string version)
+        {
+            string target = Path.Combine(dir, "Dawnloader.ps1"), tmp = target + ".new", bak = target + ".bak";
+            try
+            {
+                if (!File.Exists(target)) return "Dawnloader.ps1 wasn't found next to the app.";
+                byte[] data = UpdateBytes("dist/Dawnloader.ps1");
+                string text = Encoding.UTF8.GetString(data);
+                if (data.Length < 100000 || !text.Contains("[YTD.Program]::Run") || !text.Contains("AppVersion = \"" + version + "\""))
+                    return "the downloaded file didn't look right.";
+                File.WriteAllBytes(tmp, data);
+                File.Copy(target, bak, true);
+                try { File.Copy(tmp, target, true); }
+                catch { try { File.Copy(bak, target, true); } catch { } throw; }
+                TryDel(tmp);
+                return null;
+            }
+            catch (Exception ex) { TryDel(tmp); return (ex is UnauthorizedAccessException ? "the folder is write-protected (move Dawnloader to a normal folder such as Documents)." : ex.Message); }
+        }
+
         void ShowAbout()
         {
             using (var d = new Form())
@@ -3649,14 +3695,65 @@ namespace YTD
                 y += T.P(30);
                 Row(d, M, y, T.P(24), link("Terms of use", ShowTerms), 6, L("\u00B7", T.Body, T.Muted), 6, link("Privacy", ShowPrivacy), 6, L("\u00B7", T.Body, T.Muted), 6, link("Source code", () => open(GitHubUrl + "/dawnloader")));
                 y += T.P(34);
+                var updMsg = L("", T.Small, T.Muted); updMsg.AutoSize = false; updMsg.Location = new Point(M, y + T.P(2)); updMsg.Size = new Size(W, T.P(34)); d.Controls.Add(updMsg);
+                y += T.P(38);
+                var upd = new FlatButton("Check for updates", "refresh", 1); upd.Size = new Size(T.P(190), T.P(38)); upd.Location = new Point(M, y + T.P(4)); d.Controls.Add(upd);
+                int updState = 0; string newVer = null;
+                Action<string, Color> say = (t, c) => { updMsg.Text = t; updMsg.ForeColor = c; };
+                upd.Click += (a, b) =>
+                {
+                    if (updState == 0)
+                    {
+                        if (busy) { say("Finish the current downloads first, then check again.", T.Warn); return; }
+                        upd.Enabled = false; say("Checking GitHub...", T.Muted);
+                        System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                        {
+                            string v = null, err = null;
+                            try { v = UpdateText("VERSION").Trim(); if (!Regex.IsMatch(v, @"^\d+(\.\d+){1,3}$")) { err = "unexpected answer"; v = null; } } catch (Exception ex) { err = ex.Message; }
+                            try { d.BeginInvoke((MethodInvoker)(() =>
+                            {
+                                upd.Enabled = true;
+                                if (v == null) say(err == "unexpected answer" ? "Couldn't check: GitHub gave an unexpected answer. Try again later." : "Couldn't reach GitHub. Check your internet connection and try again.", T.Bad);
+                                else if (NewerVersion(v, AppVersion)) { newVer = v; updState = 1; upd.Text = "Update now"; say("Version " + v + " is available (you have " + AppVersion + ").", T.Ok); }
+                                else say("You have the latest version (" + AppVersion + ").", T.Ok);
+                            })); } catch { }
+                        });
+                    }
+                    else if (updState == 1)
+                    {
+                        if (busy) { say("Finish the current downloads first, then update.", T.Warn); return; }
+                        upd.Enabled = false; say("Downloading version " + newVer + "...", T.Muted); string nv = newVer;
+                        System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                        {
+                            string err = InstallUpdate(nv);
+                            try { d.BeginInvoke((MethodInvoker)(() =>
+                            {
+                                upd.Enabled = true;
+                                if (err != null) say("Couldn't update: " + err + " Your current version is unchanged.", T.Bad);
+                                else
+                                {
+                                    updState = 2; say("Updated to " + nv + ". Restart Dawnloader to use it (the first start takes a few seconds longer).", T.Ok);
+                                    upd.Text = File.Exists(Path.Combine(dir, "Start Dawnloader.bat")) ? "Restart now" : "Close Dawnloader";
+                                }
+                            })); } catch { }
+                        });
+                    }
+                    else
+                    {
+                        string bat = Path.Combine(dir, "Start Dawnloader.bat");
+                        try { if (File.Exists(bat)) { var psi = new ProcessStartInfo(bat) { UseShellExecute = true, WorkingDirectory = dir, WindowStyle = ProcessWindowStyle.Hidden }; Process.Start(psi); } } catch { }
+                        d.Close(); Close();
+                    }
+                };
+                y += T.P(40);
                 var ok = new FlatButton("OK", "", 0); ok.Size = new Size(T.P(110), T.P(38));
-                ok.Location = new Point(d.ClientSize.Width - M - ok.Width, Math.Max(y + T.P(4), d.ClientSize.Height - M - ok.Height));
+                ok.Location = new Point(d.ClientSize.Width - M - ok.Width, Math.Max(y - T.P(36), d.ClientSize.Height - M - ok.Height));
                 d.ClientSize = new Size(d.ClientSize.Width, ok.Bottom + M);
                 ok.Click += (a, b) => d.Close(); d.Controls.Add(ok);
                 d.ShowDialog(this);
             }
         }
-        const string AppVersion = "2026.11";
+        const string AppVersion = "2026.11.1";
         const string GitHubUrl = "https://github.com/zar-iffs";
 
         void ShowTerms()
@@ -3675,7 +3772,7 @@ namespace YTD
                 "# Privacy",
                 "Dawnloader has no account, no ads and no tracking. It does not collect or send any information about you.",
                 "# What it connects to",
-                "Only the sites of the links you add (to check, preview and download them), those sites' icons for the header, and GitHub or gyan.dev when you install or update the helper tools.",
+                "Only the sites of the links you add (to check, preview and download them), those sites' icons for the header, and GitHub or gyan.dev when you install or update the helper tools. 'Check for updates' in About asks this project's GitHub page for a small version file; 'Update now' downloads the new Dawnloader.ps1 from there. Neither happens unless you click.",
                 "# Sign-in",
                 "If you pick a browser under Sign in with, the login saved in that browser is used on this PC and sent only to the site you are downloading from. A temporary copy is kept in your Temp folder and deleted when Dawnloader closes.",
                 "# Files on your PC",

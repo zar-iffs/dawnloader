@@ -13,6 +13,10 @@ if bad:
 for n,l in enumerate(cs.split('\n'),1):
     if l.startswith("'@"):
         sys.exit(f"ERROR: ytd.cs line {n} starts with '@ (ends the PowerShell here-string)")
+import re
+m = re.search(r'const string AppVersion = "([\d.]+)"', cs)
+if not m: sys.exit('ERROR: AppVersion not found in ytd.cs')
+(root/'VERSION').write_text(m.group(1) + '\n')
 dst = root/'dist/Dawnloader.ps1'
 dst.write_bytes(out.replace('\n','\r\n').encode('ascii'))
 print(f'built {dst} ({out.count(chr(10))+1} lines)')

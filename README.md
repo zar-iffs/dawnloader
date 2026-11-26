@@ -27,6 +27,8 @@ On first run the app offers to download yt-dlp, ffmpeg and deno (~180 MB, no adm
 ## Privacy
 No account, no ads, no tracking. The app only connects to the sites of the links you add (plus their
 icons for the header) and to GitHub / gyan.dev when installing or updating the helper tools.
+To update later: open About (the i button) and click Check for updates. The old script is kept as `Dawnloader.ps1.bak`.
+
 Settings sit next to `Dawnloader.ps1`; download history and cached icons are in `%LOCALAPPDATA%\Dawnloader`.
 
 ## Develop

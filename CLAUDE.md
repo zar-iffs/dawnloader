@@ -39,3 +39,6 @@ Windows PowerShell `Add-Type` treats compiler warnings as errors (e.g. a member 
 `Control` member - `Site`, `Move` - stops the app from starting). Run `tools/check_windows_compile.sh` after
 `tools/build.py`; it compiles the shipped code with Microsoft's compiler and warnings-as-errors.
 The launcher also passes `-IgnoreWarnings` as a safety net.
+
+## Releasing an update
+Bump `AppVersion` in src/ytd.cs (e.g. 2026.11.1 -> 2026.11.2), run `python3 tools/build.py` (it writes `VERSION` and `dist/Dawnloader.ps1`), rebuild `releases/Dawnloader-2026.11.zip`, commit and push all of them together. About > Check for updates reads `VERSION` from the main branch and "Update now" downloads `dist/Dawnloader.ps1`, so they must always be pushed in the same commit.
