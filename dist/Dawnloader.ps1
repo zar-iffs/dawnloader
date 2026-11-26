@@ -2876,6 +2876,21 @@ namespace YTD
             return h.ToString("00") + ":" + mi.ToString("00") + ":" + se.ToString("00") + "," + ms.ToString("000");
         }
         volatile bool cutting, cutCancel; volatile Process cutProc;
+        // stops a process and everything it started (a launcher "shim" such as chocolatey's ffmpeg.exe starts the real ffmpeg as a child)
+        static void KillTree(Process p)
+        {
+            try
+            {
+                if (p == null || p.HasExited) return;
+                if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+                {
+                    var k = new ProcessStartInfo("taskkill", "/PID " + p.Id + " /T /F") { CreateNoWindow = true, UseShellExecute = false };
+                    Process.Start(k).WaitForExit(5000);
+                }
+                else p.Kill();
+            }
+            catch { }
+        }
         // a cancelled or failed clip keeps its downloaded video so Retry can carry on; folders older than a day are removed at startup
         void CleanOldTemp()
         {
@@ -3032,7 +3047,7 @@ namespace YTD
         {
             if (installing) { installCancel = true; try { if (installReq != null) installReq.Abort(); } catch { } SetStatus("Cancelling...", T.Warn); return; }
             cancelAll = true; driveCancel = true;
-            if (cutting) { cutCancel = true; try { var cp = cutProc; if (cp != null && !cp.HasExited) cp.Kill(); } catch { } return; }
+            if (cutting) { cutCancel = true; SetStatus("Cancelling...", T.Warn); KillTree(cutProc); return; }
             if (dlRunner != null) dlRunner.Kill(); else if (!driveRunning) FinishAll();
             for (int i = dlIndex + 1; i < queue.Count; i++) SetItemStatus(queue[i], "Not started", "");
         }
@@ -3856,7 +3871,7 @@ namespace YTD
                 d.ShowDialog(this);
             }
         }
-        const string AppVersion = "2026.11.2";
+        const string AppVersion = "2026.11.3";
         const string GitHubUrl = "https://github.com/zar-iffs";
 
         void ShowTerms()
