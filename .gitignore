@@ -1,0 +1,7 @@
+dawnloader-settings.txt
+tools/bin/
+*.dll
+*.exe
+*.part
+/Downloads/
+.vscode/
