@@ -593,6 +593,7 @@ namespace YTD
             psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
             psi.StandardOutputEncoding = Encoding.UTF8; psi.StandardErrorEncoding = Encoding.UTF8;
             psi.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
+            psi.EnvironmentVariables["PYTHONUTF8"] = "1";
             psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
             if (pathEnv != null) psi.EnvironmentVariables["PATH"] = pathEnv;
             p = new Process(); p.StartInfo = psi;
@@ -679,7 +680,7 @@ namespace YTD
     public class Opts
     {
         public bool Video = true; public int Height; public string Container = "mp4";
-        public string AFmt = "mp3"; public string ABr = "0"; public bool Playlist, Subs, Thumb = true, H264First; public string Cookies = ""; public string CookieFile = "";
+        public string AFmt = "mp3"; public string ABr = "0"; public bool Playlist, Subs, Thumb = true, H264First, ClipExact = true; public string Cookies = ""; public string CookieFile = "";
     }
 
     // ------------------------------------------------------------------ format choice + size estimate (mirrors the yt-dlp -S rules used for download)
@@ -976,6 +977,26 @@ namespace YTD
             foreach (var b in bases) foreach (var r in rels) { try { string f = Path.Combine(b, r); if (File.Exists(f)) return f; } catch { } }
             return null;
         }
+        public static string AppPath(string exeName)
+        {
+            foreach (var hive in new[] { Microsoft.Win32.Registry.CurrentUser, Microsoft.Win32.Registry.LocalMachine })
+            {
+                try
+                {
+                    using (var k = hive.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\" + exeName))
+                    {
+                        string v = k == null ? null : k.GetValue("") as string;
+                        if (!string.IsNullOrEmpty(v)) { v = v.Trim('"'); if (File.Exists(v)) return v; }
+                    }
+                }
+                catch { }
+            }
+            return null;
+        }
+        public static bool HasDir(string envVar, string rel)
+        {
+            try { string b = Environment.GetEnvironmentVariable(envVar); return !string.IsNullOrEmpty(b) && Directory.Exists(Path.Combine(b, rel)); } catch { return false; }
+        }
         public static Bitmap ExeIcon(string path)
         {
             if (path == null) return null;
@@ -1130,7 +1151,17 @@ namespace YTD
                 else if (c.Img != null)
                 {
                     if (Enabled) g.DrawImage(c.Img, ir);
-                    else ControlPaint.DrawImageDisabled(g, c.Img, ir.X, ir.Y, Color.Transparent);
+                    else
+                    {
+                        var cm = new System.Drawing.Imaging.ColorMatrix(new float[][] {
+                            new float[] { .3f, .3f, .3f, 0, 0 }, new float[] { .59f, .59f, .59f, 0, 0 }, new float[] { .11f, .11f, .11f, 0, 0 },
+                            new float[] { 0, 0, 0, .45f, 0 }, new float[] { 0, 0, 0, 0, 1 } });
+                        using (var ia = new System.Drawing.Imaging.ImageAttributes())
+                        {
+                            ia.SetColorMatrix(cm);
+                            g.DrawImage(c.Img, ir, 0, 0, c.Img.Width, c.Img.Height, GraphicsUnit.Pixel, ia);
+                        }
+                    }
                 }
                 else if (c.IconName != null) Icons.Draw(g, c.IconName, ir, fg);
                 else Pics.Letter(g, ir, c.Letter, k.Soft, fg);
@@ -1301,7 +1332,7 @@ namespace YTD
         Tile tVideo, tAudio; Panel pVideo, pAudio, pMore;
         ComboBox cbQuality, cbContainer, cbAFmt, cbABr; ChoiceRow cbCookies; CheckBox ckSubs, ckThumb; ContextMenuStrip rowMenu, skinMenu; Label lblVideoHint;
         Label lblAudioHint, lblCookieInfo; Panel pSign; SiteStrip sites;
-        ClipBox clipBox; ClipBar clipBar; TextBox tClipS, tClipE; Label lblClipItem, lblClipRes, lblClipHelp; FlatButton btnWhole; Item clipItem; bool clipSync;
+        ClipBox clipBox; ClipBar clipBar; TextBox tClipS, tClipE; Label lblClipItem, lblClipRes, lblClipHelp; FlatButton btnWhole; CheckBox ckExact; Item clipItem; bool clipSync; int ffLines;
         Panel lvBox, lvHead; ListView lv; ImageList thumbs; Label lblSummary, lblEmpty; TextBox txtOut; FlatButton btnBrowse, btnOpen;
         Bar bar; Label lblStatus; FlatButton btnDownload, btnCancel, btnLog;
         ToolTip tip = new ToolTip();
@@ -1599,7 +1630,10 @@ namespace YTD
             };
             tClipS = Box(); tClipS.Width = T.P(80); tClipE = Box(); tClipE.Width = T.P(80);
             tClipS.TextChanged += (s, e) => ClipTyped(); tClipE.TextChanged += (s, e) => ClipTyped();
-            Row(clipBox, cp, T.P(108), T.P(32), L("Start", T.Body, T.Muted), tClipS, 10, L("End", T.Body, T.Muted), tClipE);
+            ckExact = Check("Exact"); ckExact.Checked = true;
+            Row(clipBox, cp, T.P(108), T.P(32), L("Start", T.Body, T.Muted), tClipS, 10, L("End", T.Body, T.Muted), tClipE, 12, ckExact);
+            tip.SetToolTip(ckExact, "On: cuts exactly at your times. The clip is re-encoded, which takes longer.\n" +
+                "Off: much faster and keeps the original quality, but the start can be\na second or two early (it snaps to the nearest keyframe).");
             lblClipRes = L("", T.BodyBold, T.Text); lblClipRes.AutoSize = false; lblClipRes.AutoEllipsis = true;
             lblClipRes.SetBounds(cp, T.P(146), cw - 2 * cp, T.P(22)); lblClipRes.Anchor = lblClipItem.Anchor;
             lblClipHelp = L("", T.Small, T.Hint); lblClipHelp.AutoSize = false; lblClipHelp.AutoEllipsis = true;
@@ -1792,6 +1826,7 @@ namespace YTD
             if (cbCookies.SelectedIndex == 5 && !File.Exists(cookiesFilePath)) cbCookies.SelectedIndex = 0;
             ckSubs.Checked = d.TryGetValue("Subs", out v) && v == "1"; ckThumb.Checked = !d.TryGetValue("Thumb", out v) || v == "1";
             ckCatch.Checked = d.TryGetValue("Catch", out v) && v == "1";
+            ckExact.Checked = !d.TryGetValue("ClipExact", out v) || v == "1";
         }
         void SetIdx(ChoiceRow c, Dictionary<string, string> d, string key, int def)
         {
@@ -1811,7 +1846,7 @@ namespace YTD
                     "OutDir=" + txtOut.Text, "Mode=" + (tAudio.Checked ? "Audio" : "Video"), "Quality=" + cbQuality.SelectedIndex,
                     "Container=" + cbContainer.SelectedIndex, "AFmt=" + cbAFmt.SelectedIndex, "ABr=" + cbABr.SelectedIndex,
                     "Cookies=" + cbCookies.SelectedIndex, "CookieFile=" + cookiesFilePath,
-                    "Subs=" + (ckSubs.Checked ? 1 : 0), "Thumb=" + (ckThumb.Checked ? 1 : 0), "Catch=" + (ckCatch.Checked ? 1 : 0), "Skin=" + skinName });
+                    "Subs=" + (ckSubs.Checked ? 1 : 0), "Thumb=" + (ckThumb.Checked ? 1 : 0), "Catch=" + (ckCatch.Checked ? 1 : 0), "ClipExact=" + (ckExact.Checked ? 1 : 0), "Skin=" + skinName });
             }
             catch { }
         }
@@ -1824,7 +1859,7 @@ namespace YTD
             o.Container = new[] { "mp4", "mkv", "webm" }[Math.Max(0, cbContainer.SelectedIndex)];
             o.AFmt = new[] { "mp3", "m4a", "opus", "flac", "wav", "best" }[Math.Max(0, cbAFmt.SelectedIndex)];
             o.ABr = new[] { "0", "320K", "192K", "128K" }[Math.Max(0, cbABr.SelectedIndex)];
-            o.Subs = ckSubs.Checked; o.Thumb = ckThumb.Checked;
+            o.Subs = ckSubs.Checked; o.Thumb = ckThumb.Checked; o.ClipExact = ckExact == null || ckExact.Checked;
             o.Cookies = new[] { "", "firefox", "edge", "chrome", "brave", "file" }[Math.Max(0, Math.Min(5, cbCookies.SelectedIndex))];
             o.CookieFile = cookiesFilePath;
             return o;
@@ -1971,7 +2006,7 @@ namespace YTD
         void RunFetch(Item it, string url)
         {
             var o = GetOpts();
-            var a = new List<string> { "--no-warnings", "--ignore-config" };
+            var a = new List<string> { "--no-warnings", "--ignore-config", "--encoding", "utf-8" };
             if (it.UseCookies) CookieArgs(o, a);
             if (fetchStage == 1) { a.Add("--yes-playlist"); a.Add("--flat-playlist"); a.Add("-J"); }
             else
@@ -2233,7 +2268,7 @@ namespace YTD
                 else SetItemStatus(it, (desc == "" ? "Ready" : desc) + extra + (it.UseCookies ? " \u00B7 signed in" : "") +
                     (InPlaylist(it) && !it.IsPlaylist ? " \u00B7 in a playlist" : ""), "", it.DonePath != null && File.Exists(it.DonePath) ? "show" : "");
             }
-            it.Lvi.ToolTipText = (it.Lvi.ToolTipText ?? "").Split(new[] { "\n\nRight-click" }, StringSplitOptions.None)[0] +
+            it.Lvi.ToolTipText = Regex.Split(it.Lvi.ToolTipText ?? "", "\n\n(?:Right-click|Select it to trim)")[0] +
                 (it.IsPlaylist && it.PlHave > 0 ? "\n" + it.PlHave + " of " + it.Count + " videos were downloaded before and will be skipped." : "") +
                 (InPlaylist(it) ? (it.IsPlaylist ? "\n\nRight-click to download only this video." : "\n\nRight-click to download the whole playlist.") :
                  (!it.IsPlaylist && it.Kind != "drive" ? "\n\nSelect it to trim it in 'Clip a part' above." : ""));
@@ -2288,7 +2323,7 @@ namespace YTD
             switch (a)
             {
                 case "update": return "Update yt-dlp";
-                case "firefox": return "Use Firefox sign-in";
+                case "firefox": return "Use " + BrowserNames[BestBrowser()] + " sign-in";
                 case "retry": return "Retry";
                 case "show": return "Show in folder";
                 case "again": return "Download again";
@@ -2381,8 +2416,12 @@ namespace YTD
             {
                 case "show": if (it.DonePath != null) ShowInFolder(it.DonePath); else OpenFolder(); break;
                 case "firefox":
-                    cbCookies.SelectedIndex = 1;    // OptionsChanged re-checks the failed links signed in
-                    SetStatus("Sign-in set to Firefox - be signed in to the site in Firefox. Checking again...", T.Muted); break;
+                    {
+                        int bb = BestBrowser(); string bn = BrowserNames[bb];
+                        cbCookies.SelectedIndex = bb;    // OptionsChanged re-checks the failed links signed in
+                        SetStatus("Sign-in set to " + bn + " - be signed in to the site in " + bn + ". Checking again...", T.Muted);
+                    }
+                    break;
                 case "update": if (!busy) { foreach (var x in items) if (x.Action == "update") retryAfterUpdate = true; UpdateYtDlp(); } break;
                 case "retry":
                     if (busy) return;
@@ -2436,7 +2475,7 @@ namespace YTD
         // ---------------- download
         List<string> BuildArgs(Item it, Opts o, string extractorArgs)
         {
-            var a = new List<string> { "--newline", "--ignore-config" };
+            var a = new List<string> { "--newline", "--ignore-config", "--encoding", "utf-8", "-N", "4" };
             if (ffmpeg != null) { a.Add("--ffmpeg-location"); a.Add(Path.GetDirectoryName(ffmpeg)); }
             a.Add("-P"); a.Add(txtOut.Text.Trim().TrimEnd('\\', '/'));
             string clipTag = it.HasClip && !it.IsPlaylist ? " [clip " + Stamp(it.ClipStart) + "-" + Stamp(it.ClipEnd) + "]" : "";
@@ -2445,7 +2484,7 @@ namespace YTD
             if (clipTag != "")
             {
                 a.Add("--download-sections"); a.Add("*" + it.ClipStart.ToString("0.##", CultureInfo.InvariantCulture) + "-" + it.ClipEnd.ToString("0.##", CultureInfo.InvariantCulture));
-                a.Add("--force-keyframes-at-cuts");
+                if (o.ClipExact) { a.Add("--force-keyframes-at-cuts"); a.Add("--downloader-args"); a.Add("ffmpeg_o:-preset veryfast"); }
             }
             else if (!it.ForceAgain) { a.Add("--download-archive"); a.Add(ArchiveFile(o)); }
             bool thumbOk = o.Thumb;
@@ -2530,6 +2569,7 @@ namespace YTD
         int plIdx, plCount;
         void StartItem(Item it, string extractorArgs)
         {
+            ffLines = 0;
             if (it.Kind == "drive") { StartDrive(it); return; }
             saw403 = false; sawBot = false; lastErr = null; plIdx = 0; plCount = 0; lastDest = null; plSkipped = 0;
             SetItemStatus(it, attempt > 0 ? "Retrying (" + attempt + "/" + Fallbacks.Length + ")..." : "Starting...", "run");
@@ -2546,6 +2586,19 @@ namespace YTD
 
         void OnDlLine(Item it, string line)
         {
+            // clips are fetched by ffmpeg: show its progress and speed instead of logging every line
+            Match fp = Regex.Match(line, @"^(?:frame=|size=).*?time=(\d+):(\d+):(\d+(?:\.\d+)?).*?speed=\s*([\d.]+)x");
+            if (fp.Success && it.HasClip)
+            {
+                double t = int.Parse(fp.Groups[1].Value) * 3600 + int.Parse(fp.Groups[2].Value) * 60 + double.Parse(fp.Groups[3].Value, CultureInfo.InvariantCulture);
+                double len = Math.Max(1, (it.Duration > 0 ? Math.Min(it.ClipEnd, it.Duration) : it.ClipEnd) - it.ClipStart);
+                double pc = Math.Min(1, t / len); string speed = fp.Groups[4].Value;
+                SetItemStatus(it, "Cutting clip " + (int)(pc * 100) + "%", "run");
+                bar.Value = (dlIndex + pc) / queue.Count;
+                SetStatus("Downloading " + (dlIndex + 1) + " of " + queue.Count + ": " + it.Title + "  \u00B7  " + speed + "\u00D7 real time", T.Text);
+                if (ffLines++ % 20 == 0) Log(line);
+                return;
+            }
             Match m = Regex.Match(line, @"^\[download\]\s+([\d.]+)%(.*)");
             if (m.Success)
             {
@@ -3088,15 +3141,35 @@ namespace YTD
             if (tClipS.Enabled) { tClipS.Focus(); tClipS.SelectAll(); }
         }
 
+        // [value] -> browser seen on this PC (1 Firefox, 2 Edge, 3 Chrome, 4 Brave)
+        static bool[] BrowserFound = new bool[6];
+        static readonly string[] BrowserNames = { "", "Firefox", "Edge", "Chrome", "Brave", "" };
+        static bool BrowserProfile(int v)
+        {
+            switch (v)
+            {
+                case 1: return Pics.HasDir("APPDATA", @"Mozilla\Firefox\Profiles");
+                case 2: return Pics.HasDir("LOCALAPPDATA", @"Microsoft\Edge\User Data");
+                case 3: return Pics.HasDir("LOCALAPPDATA", @"Google\Chrome\User Data");
+                case 4: return Pics.HasDir("LOCALAPPDATA", @"BraveSoftware\Brave-Browser\User Data");
+            }
+            return false;
+        }
+        // the browser a "Use ... sign-in" button picks: Firefox works best, then the others that are installed
+        static int BestBrowser() { foreach (int v in new[] { 1, 2, 3, 4 }) if (BrowserFound[v]) return v; return 1; }
+
         ChoiceRow BuildSignIn()
         {
             var c = new ChoiceRow(tip);
             bool win = Environment.OSVersion.Platform == PlatformID.Win32NT;
             Func<int, string, string, string, string, ChoiceRow.Choice> browser = (v, name, letter, note, rel) =>
             {
-                string exe = Pics.FindExe(rel);
+                string exeName = Path.GetFileName(rel);
+                string exe = Pics.FindExe(rel) ?? Pics.AppPath(exeName);
+                bool profile = BrowserProfile(v);
                 var ch = new ChoiceRow.Choice(); ch.Value = v; ch.Letter = letter; ch.Img = Pics.ExeIcon(exe);
-                ch.Show = exe != null || !win;              // only browsers that are installed
+                ch.Show = exe != null || profile || !win;    // only browsers that are on this PC
+                BrowserFound[v] = ch.Show;
                 ch.Tip = "Use your " + name + " sign-in" + note; return ch;
             };
             var off = new ChoiceRow.Choice(); off.Value = 0; off.Text = "Off"; off.Tip = "No sign-in - fine for most links"; c.Items.Add(off);
