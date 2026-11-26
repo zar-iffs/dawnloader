@@ -667,6 +667,7 @@ namespace YTD
         public long ProbeSize = -1; public bool Probed;
         public bool UseCookies;
         public string Extractor = "", Site = "";
+        public bool NoSubs;               // subtitles failed (site limit): this one is downloaded without them
         public bool PlForce;              // user asked (right-click) for the whole playlist of a video link
         public double ClipStart = -1, ClipEnd = -1;
         public string Action = "";        // fix-it button shown in the Status column
@@ -2620,8 +2621,8 @@ namespace YTD
                     sort = "vcodec:h264," + res + (cont == "mp4" ? ",acodec:aac" : "");
                 a.AddRange(new[] { "-f", "bv*+ba/b", "-S", sort, "--merge-output-format", cont });
                 if (cont == "webm") thumbOk = false;
-                if (o.Subs && clipTag != "") a.AddRange(new[] { "--write-subs", "--write-auto-subs", "--sub-langs", "en.*,en", "--convert-subs", "srt" }); // clips: subtitles are cut to the clip and embedded afterwards (SubsForClip)
-                else if (o.Subs) a.AddRange(new[] { "--write-subs", "--write-auto-subs", "--sub-langs", "en.*,en", "--embed-subs", "--compat-options", "no-keep-subs" });
+                if (o.Subs && !it.NoSubs && clipTag != "") a.AddRange(new[] { "--write-subs", "--write-auto-subs", "--sub-langs", "en.*,en", "--convert-subs", "srt" }); // clips: subtitles are cut to the clip and embedded afterwards (SubsForClip)
+                else if (o.Subs && !it.NoSubs) a.AddRange(new[] { "--write-subs", "--write-auto-subs", "--sub-langs", "en.*,en", "--embed-subs", "--compat-options", "no-keep-subs" });
             }
             else
             {
@@ -2670,7 +2671,7 @@ namespace YTD
                 if (it.State < 2) { SetItemStatus(it, "Skipped: still checking", "bad"); continue; }
                 if (only == null && it.Archived && !it.HasClip) { SetItemStatus(it, "Skipped - already downloaded", "", it.DonePath != null ? "show" : "again"); continue; }
                 if (only == null && it.IsPlaylist && it.Count > 0 && it.PlHave >= it.Count && !it.ForceAgain) { SetItemStatus(it, "Skipped - all already downloaded", "", "again"); continue; }
-                it.Done = false; SetItemStatus(it, "Waiting", ""); queue.Add(it);
+                it.Done = false; it.NoSubs = false; SetItemStatus(it, "Waiting", ""); queue.Add(it);
             }
             if (queue.Count == 0) { SetStatus("Nothing new to download - see the Status column.", T.Warn); return; }
             cancelAll = false; dlIndex = 0; bar.Value = 0;
@@ -2754,7 +2755,7 @@ namespace YTD
         {
             bool killed = dlRunner != null && dlRunner.Killed; dlRunner = null;
             if (killed || cancelAll) { SetItemStatus(it, "Cancelled", "bad", "retry"); FinishAll(); return; }
-            if (code == 0 && it.HasClip && !it.IsPlaylist && GetOpts().Video && GetOpts().Subs && lastDest != null && ffmpeg != null)
+            if (code == 0 && it.HasClip && !it.IsPlaylist && !it.NoSubs && GetOpts().Video && GetOpts().Subs && lastDest != null && ffmpeg != null)
             {
                 string vp = Path.IsPathRooted(lastDest) ? lastDest : Path.Combine(txtOut.Text.Trim(), lastDest);
                 double cs = it.ClipStart, ce = it.ClipEnd;
@@ -2863,12 +2864,19 @@ namespace YTD
                 string full = lastDest == null ? null : (Path.IsPathRooted(lastDest) ? lastDest : Path.Combine(txtOut.Text.Trim(), lastDest));
                 if (full != null && File.Exists(full)) { it.DonePath = full; if (it.ArchiveKey != "" && !it.HasClip) AddHistory(it.ArchiveKey, full); }
                 string msg = "\u2713 Done";
+                if (it.NoSubs && GetOpts().Subs) msg += " \u00B7 no subtitles (site limit)";
                 if (it.IsPlaylist && plSkipped > 0) msg += " \u00B7 " + plSkipped + " already had";
                 else if (!it.IsPlaylist && plSkipped > 0) msg = "\u2713 Already downloaded before";
                 SetItemStatus(it, msg, "ok", it.DonePath != null ? "show" : "");
                 if (it.ArchiveKey != "" && !it.HasClip) { it.Archived = true; archiveCache = null; }
                 it.ForceAgain = false;
                 dlIndex++; NextDownload(); return;
+            }
+            if (!it.NoSubs && GetOpts().Video && GetOpts().Subs && lastErr != null && Regex.IsMatch(lastErr, "subtitles?", RegexOptions.IgnoreCase) && Regex.IsMatch(lastErr, "HTTP Error|Unable to download", RegexOptions.IgnoreCase))
+            {
+                it.NoSubs = true; attempt = 0;
+                Log("--- The site refused the subtitles (" + Friendly(lastErr, 40) + "). Downloading the video without them ---");
+                StartItem(it, null); return;
             }
             if (saw403 && it.Kind == "youtube" && attempt < Fallbacks.Length)
             {
