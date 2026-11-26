@@ -2275,7 +2275,7 @@ namespace YTD
                 else SetItemStatus(it, (desc == "" ? "Ready" : desc) + extra + (it.UseCookies ? " \u00B7 signed in" : "") +
                     (InPlaylist(it) && !it.IsPlaylist ? " \u00B7 in a playlist" : ""), "", it.DonePath != null && File.Exists(it.DonePath) ? "show" : "");
             }
-            it.Lvi.ToolTipText = Regex.Split(it.Lvi.ToolTipText ?? "", "\n\n(?:Right-click|Select it to trim|Use the list icon)")[0] +
+            it.Lvi.ToolTipText = Regex.Split(it.Lvi.ToolTipText ?? "", "\n\n(?:Right-click|Select it to trim|Use the list icon|Subtitles:)")[0] +
                 (it.IsPlaylist && it.PlHave > 0 ? "\n" + it.PlHave + " of " + it.Count + " videos were downloaded before and will be skipped." : "") +
                 (InPlaylist(it) ? (it.IsPlaylist ? "\n\nUse the list icon on the right to download only this video." : "\n\nUse the list icon on the right to download the whole playlist.") : "");
             if (it.Est < 0 && it.Kind == "other" && !it.Probed && !it.IsPlaylist) ProbeDirect(it);
@@ -2864,7 +2864,12 @@ namespace YTD
                 string full = lastDest == null ? null : (Path.IsPathRooted(lastDest) ? lastDest : Path.Combine(txtOut.Text.Trim(), lastDest));
                 if (full != null && File.Exists(full)) { it.DonePath = full; if (it.ArchiveKey != "" && !it.HasClip) AddHistory(it.ArchiveKey, full); }
                 string msg = "\u2713 Done";
-                if (it.NoSubs && GetOpts().Subs) msg += " \u00B7 no subtitles (site limit)";
+                if (it.NoSubs && GetOpts().Subs)
+                {
+                    msg += " \u00B7 no subtitles (site limit)";
+                    it.Lvi.ToolTipText = Regex.Split(it.Lvi.ToolTipText ?? "", "\n\nSubtitles:")[0] + "\n\nSubtitles: the site limited subtitle requests, so this video was saved without them." +
+                        (GetOpts().Cookies == "" ? "\nTo get them, set 'Sign in with' to your browser (signed in to the site there), then click the \u21BB icon on this row." : "\nTo get them, wait about an hour, then click the \u21BB icon on this row.");
+                }
                 if (it.IsPlaylist && plSkipped > 0) msg += " \u00B7 " + plSkipped + " already had";
                 else if (!it.IsPlaylist && plSkipped > 0) msg = "\u2713 Already downloaded before";
                 SetItemStatus(it, msg, "ok", it.DonePath != null ? "show" : "");
