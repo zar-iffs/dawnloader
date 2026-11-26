@@ -3336,7 +3336,7 @@ namespace YTD
                 Action<string> open = url => { try { Process.Start(url); } catch { } };
                 Row(d, M, y, T.P(24), L("Made by", T.Body, T.Muted), -4, link("zar-iffs on GitHub", () => open(GitHubUrl)));
                 y += T.P(30);
-                Row(d, M, y, T.P(24), link("Terms of use", ShowTerms), 6, L("\u00B7", T.Body, T.Muted), 6, link("Privacy", ShowPrivacy), 6, L("\u00B7", T.Body, T.Muted), 6, link("Source code", () => open(GitHubUrl)));
+                Row(d, M, y, T.P(24), link("Terms of use", ShowTerms), 6, L("\u00B7", T.Body, T.Muted), 6, link("Privacy", ShowPrivacy), 6, L("\u00B7", T.Body, T.Muted), 6, link("Source code", () => open(GitHubUrl + "/dawnloader")));
                 y += T.P(34);
                 var ok = new FlatButton("OK", "", 0); ok.Size = new Size(T.P(110), T.P(38));
                 ok.Location = new Point(d.ClientSize.Width - M - ok.Width, Math.Max(y + T.P(4), d.ClientSize.Height - M - ok.Height));
