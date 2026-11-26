@@ -2503,7 +2503,8 @@ namespace YTD
                     sort = "vcodec:h264," + res + (cont == "mp4" ? ",acodec:aac" : "");
                 a.AddRange(new[] { "-f", "bv*+ba/b", "-S", sort, "--merge-output-format", cont });
                 if (cont == "webm") thumbOk = false;
-                if (o.Subs) a.AddRange(new[] { "--write-subs", "--write-auto-subs", "--sub-langs", "en.*,en", "--embed-subs", "--compat-options", "no-keep-subs" });
+                if (o.Subs && clipTag != "") a.AddRange(new[] { "--write-subs", "--write-auto-subs", "--sub-langs", "en.*,en", "--convert-subs", "srt" }); // clips: subtitles are cut to the clip and embedded afterwards (SubsForClip)
+                else if (o.Subs) a.AddRange(new[] { "--write-subs", "--write-auto-subs", "--sub-langs", "en.*,en", "--embed-subs", "--compat-options", "no-keep-subs" });
             }
             else
             {
@@ -2633,6 +2634,109 @@ namespace YTD
         {
             bool killed = dlRunner != null && dlRunner.Killed; dlRunner = null;
             if (killed || cancelAll) { SetItemStatus(it, "Cancelled", "bad", "retry"); FinishAll(); return; }
+            if (code == 0 && it.HasClip && !it.IsPlaylist && GetOpts().Video && GetOpts().Subs && lastDest != null && ffmpeg != null)
+            {
+                string vp = Path.IsPathRooted(lastDest) ? lastDest : Path.Combine(txtOut.Text.Trim(), lastDest);
+                double cs = it.ClipStart, ce = it.ClipEnd;
+                SetItemStatus(it, "Adding subtitles...", "run");
+                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    string res = SubsForClip(vp, cs, ce);
+                    try { BeginInvoke((MethodInvoker)(() => { if (res != null) Log("Subtitles for the clip: " + res); OnDlExitDone(it, code); })); } catch { }
+                });
+                return;
+            }
+            OnDlExitDone(it, code);
+        }
+
+        // yt-dlp downloads subtitles for the WHOLE video and embeds them without shifting the timing, so in a clip they show at the wrong
+        // moments. Cut each .srt to the clip, embed the result, and remove the loose files. Returns null on success, else a short reason.
+        string SubsForClip(string video, double start, double end)
+        {
+            try
+            {
+                if (!File.Exists(video)) return "video file not found";
+                string dir = Path.GetDirectoryName(video), stem = Path.GetFileNameWithoutExtension(video), ext = Path.GetExtension(video).ToLowerInvariant();
+                var subs = new List<string>();
+                foreach (string f in Directory.GetFiles(dir, "*.srt"))
+                {
+                    string n = Path.GetFileName(f);
+                    if (n.StartsWith(stem + ".", StringComparison.OrdinalIgnoreCase)) subs.Add(f);
+                }
+                if (subs.Count == 0) return "no English subtitles exist for this video";
+                subs.Sort(); if (subs.Count > 3) subs.RemoveRange(3, subs.Count - 3);
+                var cut = new List<string>();
+                foreach (string f in subs)
+                {
+                    string o = f + ".cut.srt";
+                    if (CutSrt(f, o, start, end)) cut.Add(o);
+                }
+                if (cut.Count == 0) { foreach (string f in subs) TryDel(f); return "none of the subtitles fall inside the clip"; }
+                string tmp = Path.Combine(dir, stem + ".subs-tmp" + ext);
+                string codec = ext == ".mp4" || ext == ".m4v" || ext == ".mov" ? "mov_text" : ext == ".webm" ? "webvtt" : "srt";
+                var a = new List<string> { "-y", "-v", "error", "-i", video };
+                foreach (string c in cut) { a.Add("-i"); a.Add(c); }
+                a.AddRange(new[] { "-map", "0" });
+                for (int i = 0; i < cut.Count; i++) { a.Add("-map"); a.Add((i + 1) + ":0"); }
+                a.AddRange(new[] { "-c", "copy", "-c:s", codec });
+                for (int i = 0; i < cut.Count; i++) { a.Add("-metadata:s:s:" + i); a.Add("language=eng"); }
+                a.Add(tmp);
+                int rc = RunFf(a.ToArray());
+                if (rc == 0 && File.Exists(tmp) && new FileInfo(tmp).Length > 0)
+                {
+                    File.Delete(video); File.Move(tmp, video);
+                    foreach (string f in subs) TryDel(f); foreach (string c in cut) TryDel(c);
+                    return null;
+                }
+                TryDel(tmp); foreach (string c in cut) TryDel(c);
+                return "could not embed them (the .srt file(s) were kept next to the video)";
+            }
+            catch (Exception ex) { return ex.Message; }
+        }
+        // keeps only the subtitle lines that overlap [start,end] and moves them so the clip begins at 0:00
+        static bool CutSrt(string src, string dst, double start, double end)
+        {
+            string text = File.ReadAllText(src, Encoding.UTF8).Replace("\r\n", "\n").Replace('\r', '\n');
+            var sb = new StringBuilder(); int n = 0;
+            foreach (string block in Regex.Split(text.Trim('\uFEFF', '\n'), "\n\n+"))
+            {
+                Match m = Regex.Match(block, @"(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)[^\n]*\n([\s\S]+)$");
+                if (!m.Success) continue;
+                double a = SrtSec(m, 1) - start, b = SrtSec(m, 5) - start, len = end - start;
+                if (b <= 0 || a >= len) continue;
+                if (a < 0) a = 0; if (b > len) b = len;
+                sb.Append(++n).Append('\n').Append(SrtStamp(a)).Append(" --> ").Append(SrtStamp(b)).Append('\n').Append(m.Groups[9].Value.TrimEnd()).Append("\n\n");
+            }
+            if (n == 0) return false;
+            File.WriteAllText(dst, sb.ToString(), new UTF8Encoding(false));
+            return true;
+        }
+        static double SrtSec(Match m, int g)
+        {
+            string ms = m.Groups[g + 3].Value.PadRight(3, '0').Substring(0, 3);
+            return int.Parse(m.Groups[g].Value) * 3600 + int.Parse(m.Groups[g + 1].Value) * 60 + int.Parse(m.Groups[g + 2].Value) + int.Parse(ms) / 1000.0;
+        }
+        static string SrtStamp(double t)
+        {
+            long ms = (long)Math.Round(t * 1000); long h = ms / 3600000; ms -= h * 3600000; long mi = ms / 60000; ms -= mi * 60000; long se = ms / 1000; ms -= se * 1000;
+            return h.ToString("00") + ":" + mi.ToString("00") + ":" + se.ToString("00") + "," + ms.ToString("000");
+        }
+        static void TryDel(string f) { try { File.Delete(f); } catch { } }
+        int RunFf(string[] args)
+        {
+            var psi = new ProcessStartInfo(ffmpeg) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
+            var sb = new StringBuilder(); foreach (string x in args) sb.Append(Runner.Quote(x)).Append(' ');
+            psi.Arguments = sb.ToString().Trim();
+            using (var p = Process.Start(psi))
+            {
+                p.StandardOutput.ReadToEnd(); string err = p.StandardError.ReadToEnd(); p.WaitForExit();
+                if (p.ExitCode != 0 && err.Length > 0) { string e2 = err.Trim(); try { BeginInvoke((MethodInvoker)(() => Log("ffmpeg: " + e2))); } catch { } }
+                return p.ExitCode;
+            }
+        }
+
+        void OnDlExitDone(Item it, int code)
+        {
             if (code == 0)
             {
                 it.Done = true;
