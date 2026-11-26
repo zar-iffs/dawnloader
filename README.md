@@ -1,7 +1,7 @@
 # Dawnloader
 
 One-click Windows downloader for video and audio from YouTube, TikTok, Instagram, Facebook, X,
-Google Drive and 1000+ other sites. A PowerShell launcher plus a WinForms window (C#) around
+Google Drive and 1000+ other sites (adult sites are blocked). A PowerShell launcher plus a WinForms window (C#) around
 yt-dlp / ffmpeg / deno. Nothing is uploaded anywhere; everything runs on your PC.
 
 ![Dawnloader](docs/screens/dawnloader-crimson.png)

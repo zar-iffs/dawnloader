@@ -821,6 +821,45 @@ namespace YTD
     // ------------------------------------------------------------------ web: Google Drive original files + direct-link sizes
     public class WebFile { public string Name, Error, Kind = "", ContentType = ""; public long Size = -1; public HttpWebRequest Req; }
 
+    // Dawnloader does not work with adult (porn) sites: they are refused when a link is added, when it is checked, when it is
+    // downloaded, and are left out of the supported-sites list. Matching is by site name / web address, plus the "age_limit" a site reports.
+    public static class Adult
+    {
+        public const string Short = "Blocked: adult site", Why = "Dawnloader doesn't support adult sites, so this link was not checked or downloaded.";
+        // pieces of a host name (web address) that belong to adult sites
+        static readonly string[] HostTokens = {
+            "porn", "xxx", "hentai", "jizz", "sextube", "sexvid", "sexcam", "livesex", "nudevista", "xvideo", "xnxx", "xhamster", "xtube", "redtube", "youporn",
+            "spankbang", "spankwire", "chaturbate", "stripchat", "bongacams", "cam4.", "camsoda", "cammodels", "livejasmin", "eporner", "tube8", "tnaflix", "empflix",
+            "beeg.", "txxx", "nuvid", "drtuber", "4tube", "thisvid", "rule34", "redgifs", "scrolller", "manyvids", "myvidster", "peekvids", "sunporno", "slutload",
+            "eroprofile", "erocast", "erome.", "toypics", "behindkink", "murrtube", "nonktube", "zenporn", "brazzers", "onlyfans", "fansly", "motherless", "fapello",
+            "nhentai", "hanime", "vporn", "tubegalore", "faphouse", "clips4sale", "keezmovies", "extremetube", "mofosex", "camwhores", "fux.com", "xmovies" };
+        // pieces of a yt-dlp extractor name (lower case)
+        static readonly string[] KeyTokens = {
+            "porn", "xxx", "sexu", "hentai", "jizz", "redtube", "xvideos", "xnxx", "xhamster", "xtube", "spankbang", "spankwire", "chaturbate", "stripchat", "bongacams",
+            "cam4", "camsoda", "cammodels", "eporner", "tube8", "tnaflix", "empflix", "beeg", "txxx", "nuvid", "drtuber", "fourtube", "thisvid", "rule34", "redgifs",
+            "scrolller", "manyvids", "myvidster", "peekvids", "sunporno", "slutload", "eroprofile", "erocast", "toypics", "behindkink", "murrtube", "nonktube", "zenporn",
+            "youporn", "noodlemagazine", "nubiles", "keezmovies", "extremetube", "mofosex", "motherless", "camwhores", "fux" };
+        public static bool Host(string host)
+        {
+            if (string.IsNullOrEmpty(host)) return false;
+            host = host.ToLowerInvariant() + ".";
+            foreach (var t in HostTokens) if (host.Contains(t)) return true;
+            return Regex.IsMatch(host, @"(^|[.-])sex[.-]");     // sex.com, sex-tube.net ... (not "essex", "sussex")
+        }
+        public static bool Url(string url)
+        {
+            var m = Regex.Match(url ?? "", @"^[a-z][a-z0-9+.-]*://(?:[^/@]*@)?([^/:?#]+)", RegexOptions.IgnoreCase);
+            return m.Success && Host(m.Groups[1].Value);
+        }
+        public static bool Extractor(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return false;
+            key = key.ToLowerInvariant();
+            foreach (var t in KeyTokens) if (key.Contains(t)) return true;
+            return false;
+        }
+    }
+
     public static class Web
     {
         public static string DriveBase = "https://drive.usercontent.google.com";
@@ -834,6 +873,12 @@ namespace YTD
             var m = Regex.Match(url, @"/file/d/([\w-]{10,})"); if (m.Success) return m.Groups[1].Value;
             m = Regex.Match(url, @"[?&]id=([\w-]{10,})"); if (m.Success) return m.Groups[1].Value;
             return null;
+        }
+
+        public static string HostOf(string url)
+        {
+            var m = Regex.Match(url ?? "", @"^[a-z][a-z0-9+.-]*://(?:[^/@]*@)?([^/:?#]+)", RegexOptions.IgnoreCase);
+            return m.Success ? m.Groups[1].Value : url;
         }
 
         public static CookieContainer LoadCookies(string file)
@@ -2006,6 +2051,7 @@ namespace YTD
                     found.Kind = KindOf(u); if (found.Kind == "drive") { found.DriveId = Web.DriveId(u); found.IsPlaylist = false; found.Title = "Google Drive file"; }
                     found.Lvi = new ListViewItem(new[] { found.Kind == "drive" ? "Google Drive file" : u, "", "", "Checking...", "" }); found.Lvi.ImageKey = "ph"; found.Lvi.UseItemStyleForSubItems = false;
                     found.Lvi.Tag = found; added++;
+                    if (Adult.Url(u)) { found.State = 3; found.Error = "adult"; found.Lvi.Text = Web.HostOf(u); }
                 }
                 keep.Add(found);
             }
@@ -2013,6 +2059,7 @@ namespace YTD
             foreach (var it in items) if (!keep.Contains(it) && it == fetching && fetchRunner != null) { fetchRunner.Kill(); }
             items = keep;
             lv.BeginUpdate(); lv.Items.Clear(); foreach (var it in items) lv.Items.Add(it.Lvi); lv.EndUpdate();
+            foreach (var x in items) if (x.State == 3 && x.Error == "adult" && x.Status != Adult.Short) { SetItemStatus(x, Adult.Short, "bad"); x.Lvi.ToolTipText = Adult.Why; }
             PlaceQueueLabels(); UpdateSummary(); FetchNext();
         }
 
@@ -2038,7 +2085,7 @@ namespace YTD
             else
             {
                 a.Add("--no-playlist");
-                a.Add("--print"); a.Add("%(.{id,title,channel,uploader,duration,extractor_key,playlist_count,thumbnail,webpage_url_domain})j");
+                a.Add("--print"); a.Add("%(.{id,title,channel,uploader,duration,extractor_key,playlist_count,thumbnail,webpage_url_domain,age_limit})j");
                 a.Add("--print"); a.Add("%(formats.:.{format_id,ext,vcodec,acodec,width,height,tbr,abr,filesize,filesize_approx,protocol,url})j");
             }
             a.Add("--"); a.Add(url);
@@ -2063,6 +2110,7 @@ namespace YTD
                     string json = FirstJsonLine(output, '{');
                     if (code != 0 || json == null) throw new Exception(ErrorText(output));
                     var d = (Dictionary<string, object>)js.DeserializeObject(json);
+                    if (Adult.Extractor(Str(d, "extractor_key", "")) || Adult.Host(Str(d, "webpage_url_domain", "")) || Adult.Url(Str(d, "webpage_url", ""))) throw new Exception(Adult.Why);
                     it.Title = Str(d, "title", it.Url); it.Channel = Str(d, "channel", Str(d, "uploader", ""));
                     var entries = d.ContainsKey("entries") ? d["entries"] as object[] : null;
                     it.Count = entries == null ? 0 : entries.Length;
@@ -2092,6 +2140,11 @@ namespace YTD
                 if (code != 0 || meta == null || fm == null) throw new Exception(ErrorText(output));
                 var js2 = new JavaScriptSerializer(); js2.MaxJsonLength = int.MaxValue;
                 var md = (Dictionary<string, object>)js2.DeserializeObject(meta);
+                {
+                    string xk = Str(md, "extractor_key", ""); double age = Num(md, "age_limit");
+                    // known adult sites by name or address; a link on any unknown site (generic extractor) that the page itself marks 18+
+                    if (Adult.Extractor(xk) || Adult.Host(Str(md, "webpage_url_domain", "")) || (age >= 18 && (xk == "Generic" || xk == ""))) throw new Exception(Adult.Why);
+                }
                 var arr = (object[])js2.DeserializeObject(fm);
                 var list = new List<Fmt>();
                 foreach (var fo in arr)
@@ -2131,6 +2184,13 @@ namespace YTD
             }
             catch (Exception ex)
             {
+                if (ex.Message == Adult.Why)
+                {
+                    it.State = 3; it.Error = "adult"; it.Formats = null;
+                    SetItemStatus(it, Adult.Short, "bad", ""); it.Lvi.ToolTipText = Adult.Why; it.Lvi.SubItems[1].Text = ""; it.Lvi.SubItems[2].Text = "";
+                    Log("Blocked (adult site): " + it.Url);
+                    UpdateSummary(); FetchNext(); return;
+                }
                 if (NeedsSignIn(ex.Message, it) && !it.UseCookies && GetOpts().Cookies != "")
                 {
                     it.UseCookies = true; it.State = 0;            // try this one link again, signed in
@@ -2687,6 +2747,7 @@ namespace YTD
             queue = new List<Item>();
             foreach (var it in only ?? items)
             {
+                if (it.State == 3 && it.Error == "adult") continue;
                 if (it.State == 3) { string was = Regex.Replace(it.Status ?? "", "^Skipped: ", ""); SetItemStatus(it, "Skipped: " + (was != "" ? was : Friendly(it.Error ?? "", 22)), "bad", it.Action); continue; }
                 if (it.State < 2) { SetItemStatus(it, "Skipped: still checking", "bad"); continue; }
                 if (only == null && it.Archived && !it.HasClip) { SetItemStatus(it, "Skipped - already downloaded", "", it.DonePath != null ? "show" : "again"); continue; }
@@ -2712,6 +2773,11 @@ namespace YTD
         void StartItem(Item it, string extractorArgs)
         {
             ffLines = 0;
+            if (Adult.Url(it.Url) || Adult.Extractor(it.Extractor))
+            {
+                it.State = 3; it.Error = "adult"; SetItemStatus(it, Adult.Short, "bad", ""); Log("Blocked (adult site): " + it.Url);
+                dlIndex++; NextDownload(); return;
+            }
             if (it.Kind == "drive") { StartDrive(it); return; }
             saw403 = false; sawBot = false; lastErr = null; plIdx = 0; plCount = 0; lastDest = null; plSkipped = 0;
             SetItemStatus(it, attempt > 0 ? "Retrying (" + attempt + "/" + Fallbacks.Length + ")..." : "Starting...", "run");
@@ -3029,7 +3095,7 @@ namespace YTD
             {
                 bar.Value = 1;
                 int skipped = 0, waiting = 0;
-                foreach (var x in items) if (!queue.Contains(x)) { if ((x.Status ?? "").StartsWith("Skipped")) skipped++; else waiting++; }
+                foreach (var x in items) if (!queue.Contains(x)) { if ((x.Status ?? "").StartsWith("Skipped") || x.Error == "adult") skipped++; else waiting++; }
                 string msg = ok + " done" + (failed > 0 ? ", " + failed + " failed" : "") + (skipped > 0 ? ", " + skipped + " skipped" : "") + (waiting > 0 ? ", " + waiting + " waiting - press Download" : "") + ".";
                 if (blocked > 0)
                 {
@@ -3592,7 +3658,7 @@ namespace YTD
                             {
                                 string t = line.Trim(); if (t == "" || t.Contains("CURRENTLY BROKEN")) continue;
                                 string n = t.Split(':')[0].Trim();
-                                if (n == "" || n.Equals("generic", StringComparison.OrdinalIgnoreCase) || seen.ContainsKey(n)) continue;
+                                if (n == "" || n.Equals("generic", StringComparison.OrdinalIgnoreCase) || seen.ContainsKey(n) || Adult.Extractor(n)) continue;
                                 seen[n] = true;
                                 names.Add(n);
                             }
@@ -3664,6 +3730,7 @@ namespace YTD
         }
         static bool Catchable(string u)
         {
+            if (Adult.Url(u)) return false;
             if (KindOf(u) != "other") return true;
             return Regex.IsMatch(u, @"^https?://([\w-]+\.)*(tiktok\.com|instagram\.com|facebook\.com|fb\.watch|x\.com|twitter\.com|vimeo\.com|dailymotion\.com|reddit\.com|redd\.it|twitch\.tv|soundcloud\.com|bilibili\.com|threads\.net|bsky\.app|pinterest\.com|streamable\.com|rumble\.com|kick\.com|9gag\.com|ted\.com|bandcamp\.com|mixcloud\.com)/", RegexOptions.IgnoreCase)
                 || Regex.IsMatch(u, @"\.(mp4|m4v|mkv|webm|mov|mp3|m4a|m3u8)([?#].*)?$", RegexOptions.IgnoreCase);
@@ -3871,7 +3938,7 @@ namespace YTD
                 d.ShowDialog(this);
             }
         }
-        const string AppVersion = "2026.11.3";
+        const string AppVersion = "2026.11.4";
         const string GitHubUrl = "https://github.com/zar-iffs";
 
         void ShowTerms()
@@ -3880,7 +3947,7 @@ namespace YTD
                 "# Terms of use",
                 "Dawnloader is free, open-source software under the MIT licence. It is provided \"as is\", without any warranty.",
                 "You are responsible for what you download. Only download content you own, that is licensed for reuse, or that you have permission to save, and follow the rules of the sites you use.",
-                "Dawnloader does not get around copy protection (DRM). It is not made by, affiliated with or endorsed by YouTube, Google, TikTok, Meta, X or any other site. Site names and icons belong to their owners.",
+                "Adult (porn) sites are blocked: Dawnloader will not check or download links from them. Dawnloader does not get around copy protection (DRM). It is not made by, affiliated with or endorsed by YouTube, Google, TikTok, Meta, X or any other site. Site names and icons belong to their owners.",
                 "The helper tools it uses (yt-dlp, FFmpeg, Deno) are separate projects with their own licences." });
         }
 
