@@ -668,6 +668,7 @@ namespace YTD
         public bool UseCookies;
         public string Extractor = "", Site = "";
         public bool NoSubs;               // subtitles failed (site limit): this one is downloaded without them
+        public bool FastClip; public string TmpDir = "";   // clip: whole video is downloaded to TmpDir first, then cut
         public bool PlForce;              // user asked (right-click) for the whole playlist of a video link
         public double ClipStart = -1, ClipEnd = -1;
         public string Action = "";        // fix-it button shown in the Status column
@@ -681,7 +682,7 @@ namespace YTD
     public class Opts
     {
         public bool Video = true; public int Height; public string Container = "mp4";
-        public string AFmt = "mp3"; public string ABr = "0"; public bool Playlist, Subs, Thumb = true, H264First, ClipExact = true; public string Cookies = ""; public string CookieFile = "";
+        public string AFmt = "mp3"; public string ABr = "0"; public bool Playlist, Subs, Thumb = true, H264First, ClipExact; public string Cookies = ""; public string CookieFile = "";
     }
 
     // ------------------------------------------------------------------ format choice + size estimate (mirrors the yt-dlp -S rules used for download)
@@ -1368,7 +1369,7 @@ namespace YTD
             Shown += (s, e) =>
             {
                 ApplyWindowTheme();
-                CheckVersion(); UpdateToolsLabel(); StartClipboardWatch();
+                CheckVersion(); UpdateToolsLabel(); StartClipboardWatch(); CleanOldTemp();
                 if (ytdlp == null || ffmpeg == null)
                     BeginInvoke((MethodInvoker)delegate { AskInstall("This app needs a few free helper tools before it can download."); });
             };
@@ -1631,10 +1632,10 @@ namespace YTD
             };
             tClipS = Box(); tClipS.Width = T.P(80); tClipE = Box(); tClipE.Width = T.P(80);
             tClipS.TextChanged += (s, e) => ClipTyped(); tClipE.TextChanged += (s, e) => ClipTyped();
-            ckExact = Check("Exact"); ckExact.Checked = true;
+            ckExact = Check("Exact"); ckExact.Checked = false;
             Row(clipBox, cp, T.P(108), T.P(32), L("Start", T.Body, T.Muted), tClipS, 10, L("End", T.Body, T.Muted), tClipE, 12, ckExact);
             tip.SetToolTip(ckExact, "On: cuts exactly at your times. The clip is re-encoded, which takes longer.\n" +
-                "Off: much faster and keeps the original quality, but the start can be\na second or two early (it snaps to the nearest keyframe).");
+                "Off (default): instant and keeps the original quality, but the start can be\na second or two early (it snaps to the nearest keyframe).");
             lblClipRes = L("", T.BodyBold, T.Text); lblClipRes.AutoSize = false; lblClipRes.AutoEllipsis = true;
             lblClipRes.SetBounds(cp, T.P(146), cw - 2 * cp, T.P(22)); lblClipRes.Anchor = lblClipItem.Anchor;
             lblClipHelp = L("", T.Small, T.Hint); lblClipHelp.AutoSize = false; lblClipHelp.AutoEllipsis = true;
@@ -1831,7 +1832,7 @@ namespace YTD
             if (cbCookies.SelectedIndex == 5 && !File.Exists(cookiesFilePath)) cbCookies.SelectedIndex = 0;
             ckSubs.Checked = d.TryGetValue("Subs", out v) && v == "1"; ckThumb.Checked = !d.TryGetValue("Thumb", out v) || v == "1";
             ckCatch.Checked = d.TryGetValue("Catch", out v) && v == "1";
-            ckExact.Checked = !d.TryGetValue("ClipExact", out v) || v == "1";
+            ckExact.Checked = d.TryGetValue("ClipExact", out v) && v == "1";
         }
         void SetIdx(ChoiceRow c, Dictionary<string, string> d, string key, int def)
         {
@@ -1864,7 +1865,7 @@ namespace YTD
             o.Container = new[] { "mp4", "mkv", "webm" }[Math.Max(0, cbContainer.SelectedIndex)];
             o.AFmt = new[] { "mp3", "m4a", "opus", "flac", "wav", "best" }[Math.Max(0, cbAFmt.SelectedIndex)];
             o.ABr = new[] { "0", "320K", "192K", "128K" }[Math.Max(0, cbABr.SelectedIndex)];
-            o.Subs = ckSubs.Checked; o.Thumb = ckThumb.Checked; o.ClipExact = ckExact == null || ckExact.Checked;
+            o.Subs = ckSubs.Checked; o.Thumb = ckThumb.Checked; o.ClipExact = ckExact != null && ckExact.Checked;
             o.Cookies = new[] { "", "firefox", "edge", "chrome", "brave", "file" }[Math.Max(0, Math.Min(5, cbCookies.SelectedIndex))];
             o.CookieFile = cookiesFilePath;
             return o;
@@ -2595,15 +2596,16 @@ namespace YTD
         {
             var a = new List<string> { "--newline", "--ignore-config", "--encoding", "utf-8", "-N", "4" };
             if (ffmpeg != null) { a.Add("--ffmpeg-location"); a.Add(Path.GetDirectoryName(ffmpeg)); }
-            a.Add("-P"); a.Add(txtOut.Text.Trim().TrimEnd('\\', '/'));
+            string outDir = txtOut.Text.Trim().TrimEnd('\\', '/');
             string clipTag = it.HasClip && !it.IsPlaylist ? " [clip " + Stamp(it.ClipStart) + "-" + Stamp(it.ClipEnd) + "]" : "";
+            // A clip is never fetched as a "section": that goes through ffmpeg on one connection and YouTube serves it slowly.
+            // The whole video comes down at full speed (parallel connections) into a temporary folder and is cut on this PC afterwards.
+            it.FastClip = clipTag != "";
+            if (it.FastClip) it.TmpDir = Path.Combine(outDir, ".dawnloader-tmp-" + Regex.Replace(it.Id != "" ? it.Id : Math.Abs(it.Url.GetHashCode()).ToString(), @"[^\w-]", "_"));
+            a.Add("-P"); a.Add(it.FastClip ? it.TmpDir : outDir);
             if (it.IsPlaylist) { a.Add("--yes-playlist"); a.Add("-o"); a.Add("%(playlist_title|Single videos).80B/%(playlist_index&{} - |)s%(title).90B [%(id)s].%(ext)s"); }
             else { a.Add("--no-playlist"); a.Add("-o"); a.Add(it.Kind == "youtube" ? "%(title).150B [%(id)s]" + clipTag + ".%(ext)s" : (it.Extractor == "" || it.Extractor == "Generic") ? "%(title).150B" + clipTag + ".%(ext)s" : "%(title).90B [%(id)s]" + clipTag + ".%(ext)s"); }
-            if (clipTag != "")
-            {
-                a.Add("--download-sections"); a.Add("*" + it.ClipStart.ToString("0.##", CultureInfo.InvariantCulture) + "-" + it.ClipEnd.ToString("0.##", CultureInfo.InvariantCulture));
-                if (o.ClipExact) { a.Add("--force-keyframes-at-cuts"); a.Add("--downloader-args"); a.Add("ffmpeg_o:-preset veryfast"); }
-            }
+            if (clipTag != "") { }
             else if (!it.ForceAgain) { a.Add("--download-archive"); a.Add(ArchiveFile(o)); }
             bool thumbOk = o.Thumb;
             if (o.Video)
@@ -2710,7 +2712,7 @@ namespace YTD
         {
             // clips are fetched by ffmpeg: show its progress and speed instead of logging every line
             Match fp = Regex.Match(line, @"^(?:frame=|size=).*?time=(\d+):(\d+):(\d+(?:\.\d+)?).*?speed=\s*([\d.]+)x");
-            if (fp.Success && it.HasClip)
+            if (fp.Success && it.HasClip && !it.FastClip)
             {
                 double t = int.Parse(fp.Groups[1].Value) * 3600 + int.Parse(fp.Groups[2].Value) * 60 + double.Parse(fp.Groups[3].Value, CultureInfo.InvariantCulture);
                 double len = Math.Max(1, (it.Duration > 0 ? Math.Min(it.ClipEnd, it.Duration) : it.ClipEnd) - it.ClipStart);
@@ -2729,7 +2731,8 @@ namespace YTD
                 Match sp = Regex.Match(rest, @"at\s+(\S+)\s+ETA\s+(\S+)");
                 string extra = sp.Success ? "  \u00B7  " + sp.Groups[1].Value + "  \u00B7  " + sp.Groups[2].Value + " left" : "";
                 string pl = plCount > 0 ? " (" + plIdx + "/" + plCount + ")" : "";
-                SetItemStatus(it, "Downloading " + (int)pct + "%" + pl, "run");
+                string rowEta = sp.Success && Regex.IsMatch(sp.Groups[2].Value, @"\d") ? "  \u00B7  " + sp.Groups[2].Value + " left" : "";
+                SetItemStatus(it, (it.FastClip ? "Full video " : "Downloading ") + (int)pct + "%" + pl + rowEta, "run");
                 double frac = plCount > 0 ? ((plIdx - 1) + pct / 100.0) / plCount : pct / 100.0;
                 bar.Value = (dlIndex + frac) / queue.Count;
                 SetStatus("Downloading " + (dlIndex + 1) + " of " + queue.Count + ": " + it.Title + extra, T.Text);
@@ -2755,15 +2758,27 @@ namespace YTD
         {
             bool killed = dlRunner != null && dlRunner.Killed; dlRunner = null;
             if (killed || cancelAll) { SetItemStatus(it, "Cancelled", "bad", "retry"); FinishAll(); return; }
-            if (code == 0 && it.HasClip && !it.IsPlaylist && !it.NoSubs && GetOpts().Video && GetOpts().Subs && lastDest != null && ffmpeg != null)
+            if (code == 0 && it.FastClip && lastDest != null && ffmpeg != null)
             {
-                string vp = Path.IsPathRooted(lastDest) ? lastDest : Path.Combine(txtOut.Text.Trim(), lastDest);
-                double cs = it.ClipStart, ce = it.ClipEnd;
-                SetItemStatus(it, "Adding subtitles...", "run");
+                string full = Path.IsPathRooted(lastDest) ? lastDest : Path.Combine(it.TmpDir, lastDest);
+                var o = GetOpts(); double cs = it.ClipStart, ce = it.Duration > 0 ? Math.Min(it.ClipEnd, it.Duration) : it.ClipEnd;
+                string outDir = txtOut.Text.Trim().TrimEnd('\\', '/'), tmp = it.TmpDir; bool wantSubs = o.Video && o.Subs && !it.NoSubs;
+                cutting = true; cutCancel = false;
+                SetItemStatus(it, o.ClipExact && o.Video ? "Cutting the clip (exact, a moment)..." : "Cutting the clip...", "run");
+                SetStatus("Downloading " + (dlIndex + 1) + " of " + queue.Count + ": " + it.Title + "  \u00B7  cutting your clip", T.Text);
                 System.Threading.ThreadPool.QueueUserWorkItem(_ =>
                 {
-                    string res = SubsForClip(vp, cs, ce);
-                    try { BeginInvoke((MethodInvoker)(() => { if (res != null) Log("Subtitles for the clip: " + res); OnDlExitDone(it, code); })); } catch { }
+                    string final = null, res = CutClip(it, full, outDir, cs, ce, o.Video, o.ClipExact, out final), subNote = null;
+                    if (res == null && wantSubs) subNote = SubsForClip(final, tmp, cs, ce);
+                    if (res == null && !cutCancel) { try { Directory.Delete(tmp, true); } catch { } }
+                    try { BeginInvoke((MethodInvoker)(() =>
+                    {
+                        cutting = false;
+                        if (cutCancel || cancelAll) { SetItemStatus(it, "Cancelled", "bad", "retry"); FinishAll(); return; }
+                        if (subNote != null) Log("Subtitles for the clip: " + subNote);
+                        if (res != null) { lastErr = res; OnDlExitDone(it, 1); return; }
+                        lastDest = final; OnDlExitDone(it, 0);
+                    })); } catch { }
                 });
                 return;
             }
@@ -2772,14 +2787,14 @@ namespace YTD
 
         // yt-dlp downloads subtitles for the WHOLE video and embeds them without shifting the timing, so in a clip they show at the wrong
         // moments. Cut each .srt to the clip, embed the result, and remove the loose files. Returns null on success, else a short reason.
-        string SubsForClip(string video, double start, double end)
+        string SubsForClip(string video, string subsDir, double start, double end)
         {
             try
             {
                 if (!File.Exists(video)) return "video file not found";
                 string dir = Path.GetDirectoryName(video), stem = Path.GetFileNameWithoutExtension(video), ext = Path.GetExtension(video).ToLowerInvariant();
                 var subs = new List<string>();
-                foreach (string f in Directory.GetFiles(dir, "*.srt"))
+                foreach (string f in Directory.GetFiles(subsDir ?? dir, "*.srt"))
                 {
                     string n = Path.GetFileName(f);
                     if (n.StartsWith(stem + ".", StringComparison.OrdinalIgnoreCase)) subs.Add(f);
@@ -2802,7 +2817,7 @@ namespace YTD
                 a.AddRange(new[] { "-c", "copy", "-c:s", codec });
                 for (int i = 0; i < cut.Count; i++) { a.Add("-metadata:s:s:" + i); a.Add("language=eng"); }
                 a.Add(tmp);
-                int rc = RunFf(a.ToArray());
+                int rc = RunFf(a.ToArray(), null);
                 if (rc == 0 && File.Exists(tmp) && new FileInfo(tmp).Length > 0)
                 {
                     File.Delete(video); File.Move(tmp, video);
@@ -2842,15 +2857,79 @@ namespace YTD
             long ms = (long)Math.Round(t * 1000); long h = ms / 3600000; ms -= h * 3600000; long mi = ms / 60000; ms -= mi * 60000; long se = ms / 1000; ms -= se * 1000;
             return h.ToString("00") + ":" + mi.ToString("00") + ":" + se.ToString("00") + "," + ms.ToString("000");
         }
+        volatile bool cutting, cutCancel; volatile Process cutProc;
+        // a cancelled or failed clip keeps its downloaded video so Retry can carry on; folders older than a day are removed at startup
+        void CleanOldTemp()
+        {
+            string od = txtOut.Text.Trim().TrimEnd('\\', '/');
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    if (!Directory.Exists(od)) return;
+                    foreach (string d in Directory.GetDirectories(od, ".dawnloader-tmp-*"))
+                        if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(d) > TimeSpan.FromDays(1)) { try { Directory.Delete(d, true); } catch { } }
+                }
+                catch { }
+            });
+        }
+        // cuts [start,end] out of the downloaded full file into outDir. Exact = re-encode (frame-accurate); otherwise copy (instant, keyframe start).
+        string CutClip(Item it, string full, string outDir, double start, double end, bool video, bool exact, out string final)
+        {
+            final = null;
+            try
+            {
+                if (!File.Exists(full)) return "the downloaded video wasn't found";
+                Directory.CreateDirectory(outDir);
+                final = Path.Combine(outDir, Path.GetFileName(full));
+                string ext = Path.GetExtension(full).ToLowerInvariant();
+                var a = new List<string> { "-y", "-v", "error", "-ss", start.ToString("0.###", CultureInfo.InvariantCulture) };
+                if (end > start) { a.Add("-to"); a.Add(end.ToString("0.###", CultureInfo.InvariantCulture)); }
+                a.Add("-i"); a.Add(full); a.AddRange(new[] { "-map_chapters", "-1" });
+                if (video && exact && ext != ".webm") a.AddRange(new[] { "-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k" });
+                else if (video) a.AddRange(new[] { "-map", "0:v", "-map", "0:a?", "-c", "copy", "-avoid_negative_ts", "make_zero" });
+                else a.AddRange(new[] { "-map", "0", "-c", "copy" });
+                a.Add(final);
+                Action<double> onTime = null;
+                if (video && exact && ext != ".webm")
+                {
+                    a.Insert(0, "pipe:1"); a.Insert(0, "-progress"); a.Insert(2, "-nostats");
+                    double len = Math.Max(1, end - start); var sw = Stopwatch.StartNew(); long lastUi = 0;
+                    onTime = t =>
+                    {
+                        if (sw.ElapsedMilliseconds - lastUi < 500) return; lastUi = sw.ElapsedMilliseconds;
+                        double pc = Math.Max(0.01, Math.Min(0.99, t / len)), left = sw.Elapsed.TotalSeconds * (1 - pc) / pc;
+                        try { BeginInvoke((MethodInvoker)(() => { if (cutting) { SetItemStatus(it, "Cutting " + (int)(pc * 100) + "%  \u00B7  " + Eta(left) + " left", "run"); bar.Value = (dlIndex + pc) / queue.Count; } })); } catch { }
+                    };
+                }
+                int rc = RunFf(a.ToArray(), onTime);
+                if (cutCancel) { TryDel(final); return null; }
+                if (rc != 0 || !File.Exists(final) || new FileInfo(final).Length == 0) { TryDel(final); return "ffmpeg couldn't cut the clip (see Details)"; }
+                return null;
+            }
+            catch (Exception ex) { return ex.Message; }
+        }
         static void TryDel(string f) { try { File.Delete(f); } catch { } }
-        int RunFf(string[] args)
+        static string Eta(double sec) { int s = (int)Math.Ceiling(sec); return s < 60 ? s + "s" : (s / 60) + ":" + (s % 60).ToString("00"); }
+        int RunFf(string[] args, Action<double> onTime)
         {
             var psi = new ProcessStartInfo(ffmpeg) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
             var sb = new StringBuilder(); foreach (string x in args) sb.Append(Runner.Quote(x)).Append(' ');
             psi.Arguments = sb.ToString().Trim();
             using (var p = Process.Start(psi))
             {
-                p.StandardOutput.ReadToEnd(); string err = p.StandardError.ReadToEnd(); p.WaitForExit();
+                cutProc = p;
+                var errSb = new StringBuilder();
+                p.ErrorDataReceived += (se, ev) => { if (ev.Data != null) lock (errSb) errSb.AppendLine(ev.Data); };
+                p.BeginErrorReadLine();
+                string ln;
+                while ((ln = p.StandardOutput.ReadLine()) != null)
+                {
+                    if (onTime == null) continue;
+                    var tm = Regex.Match(ln, @"^out_time_(?:us|ms)=(\d+)");
+                    if (tm.Success) onTime(double.Parse(tm.Groups[1].Value, CultureInfo.InvariantCulture) / 1e6);
+                }
+                p.WaitForExit(); cutProc = null; string err; lock (errSb) err = errSb.ToString();
                 if (p.ExitCode != 0 && err.Length > 0) { string e2 = err.Trim(); try { BeginInvoke((MethodInvoker)(() => Log("ffmpeg: " + e2))); } catch { } }
                 return p.ExitCode;
             }
@@ -2935,7 +3014,8 @@ namespace YTD
         {
             if (installing) { installCancel = true; try { if (installReq != null) installReq.Abort(); } catch { } SetStatus("Cancelling...", T.Warn); return; }
             cancelAll = true; driveCancel = true;
-                        if (dlRunner != null) dlRunner.Kill(); else if (!driveRunning) FinishAll();
+            if (cutting) { cutCancel = true; try { var cp = cutProc; if (cp != null && !cp.HasExited) cp.Kill(); } catch { } return; }
+            if (dlRunner != null) dlRunner.Kill(); else if (!driveRunning) FinishAll();
             for (int i = dlIndex + 1; i < queue.Count; i++) SetItemStatus(queue[i], "Not started", "");
         }
 
@@ -3323,6 +3403,11 @@ namespace YTD
                     if (!tClipE.Focused) tClipE.Text = z > 0 ? Clock(z) : "";
                     ClipResult();
                     if (dur <= 0) help = "Length unknown - type the start and end.";
+                    else if (it.HasClip)
+                    {
+                        string dd; double full = Est.ForItem(it, GetOpts(), out dd);
+                        help = "Fetches the whole video" + (full > 0 ? " (" + T.Bytes(full) + ")" : "") + " at full speed, then cuts your clip.";
+                    }
                 }
             }
             lblClipHelp.Text = help;
@@ -3753,7 +3838,7 @@ namespace YTD
                 d.ShowDialog(this);
             }
         }
-        const string AppVersion = "2026.11.1";
+        const string AppVersion = "2026.11.2";
         const string GitHubUrl = "https://github.com/zar-iffs";
 
         void ShowTerms()

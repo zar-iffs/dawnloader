@@ -7,7 +7,7 @@ yt-dlp / ffmpeg / deno. Nothing is uploaded anywhere; everything runs on your PC
 ![Dawnloader](docs/screens/dawnloader-crimson.png)
 
 ## Features
-- **Clip a part** - drag the handles or type start/end times to download only a section
+- **Clip a part** - drag the handles or type start/end times; the video is fetched at full speed and your clip is cut on your PC (instant, or frame-exact with "Exact")
 - Paste links (or turn on "Catch copied links") and see title, length and estimated size before downloading
 - Video (quality + MP4/MKV/WEBM) or audio only (MP3, M4A, OPUS, FLAC, WAV or original)
 - Playlists, Google Drive files and folders (including private ones), direct links
