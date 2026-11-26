@@ -2837,10 +2837,12 @@ namespace YTD
                 {
                     string final = null, res = CutClip(it, full, outDir, cs, ce, o.Video, o.ClipExact, out final), subNote = null;
                     if (res == null && wantSubs) subNote = SubsForClip(final, tmp, cs, ce);
-                    if (res == null && !cutCancel) { try { Directory.Delete(tmp, true); } catch { } }
+                    string delErr = null;
+                    if (res == null && !cutCancel) delErr = DeleteTmp(tmp);
                     try { BeginInvoke((MethodInvoker)(() =>
                     {
                         cutting = false;
+                        if (delErr != null) Log("Could not remove the temporary folder " + tmp + ": " + delErr);
                         if (cutCancel || cancelAll) { SetItemStatus(it, "Cancelled", "bad", "retry"); FinishAll(); return; }
                         if (subNote != null) Log("Subtitles for the clip: " + subNote);
                         if (res != null) { lastErr = res; OnDlExitDone(it, 1); return; }
@@ -2940,7 +2942,25 @@ namespace YTD
             }
             catch { }
         }
-        // a cancelled or failed clip keeps its downloaded video so Retry can carry on; folders older than a day are removed at startup
+        // removes a temporary folder, retrying for a few seconds in case Windows (antivirus, a closing ffmpeg) still holds a file. Returns null when gone.
+        static string DeleteTmp(string dir)
+        {
+            string err = null;
+            for (int i = 0; i < 12; i++)
+            {
+                try
+                {
+                    if (!Directory.Exists(dir)) return null;
+                    foreach (string f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories)) { try { File.SetAttributes(f, FileAttributes.Normal); } catch { } }
+                    Directory.Delete(dir, true);
+                    return null;
+                }
+                catch (Exception ex) { err = ex.Message; }
+                Thread.Sleep(500);
+            }
+            return Directory.Exists(dir) ? err : null;
+        }
+        // a cancelled or failed clip keeps its downloaded video so Retry can carry on; folders older than 2 hours are removed at startup
         void CleanOldTemp()
         {
             string od = txtOut.Text.Trim().TrimEnd('\\', '/');
@@ -2950,7 +2970,7 @@ namespace YTD
                 {
                     if (!Directory.Exists(od)) return;
                     foreach (string d in Directory.GetDirectories(od, ".dawnloader-tmp-*"))
-                        if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(d) > TimeSpan.FromDays(1)) { try { Directory.Delete(d, true); } catch { } }
+                        if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(d) > TimeSpan.FromHours(2)) DeleteTmp(d);
                 }
                 catch { }
             });
@@ -3921,7 +3941,7 @@ namespace YTD
                 d.ShowDialog(this);
             }
         }
-        const string AppVersion = "2026.11.6";
+        const string AppVersion = "2026.11.7";
         const string GitHubUrl = "https://github.com/zar-iffs";
 
         void ShowTerms()
