@@ -34,7 +34,7 @@ try {
             [System.Web.Script.Serialization.JavaScriptSerializer].Assembly.Location,
             [System.IO.Compression.ZipArchive].Assembly.Location
         )
-        Add-Type -TypeDefinition $Source -ReferencedAssemblies $refs -OutputAssembly $dll -OutputType Library
+        Add-Type -TypeDefinition $Source -ReferencedAssemblies $refs -OutputAssembly $dll -OutputType Library -IgnoreWarnings
     }
     Add-Type -Path $dll
     [YTD.Program]::Run($ScriptDir)

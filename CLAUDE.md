@@ -33,3 +33,9 @@ Please smoke-test on a Windows machine after any UI or launcher change.
 
 ## Next work
 See `ROADMAP.md`. Skins live in the `Skin` class and `T.MakeSkin` (custom controls paint through `T.PaintUnder`, so Glass transparency works). Pending: small wins in ROADMAP.md, GitHub release prep.
+
+## Before shipping
+Windows PowerShell `Add-Type` treats compiler warnings as errors (e.g. a member named like an inherited
+`Control` member - `Site`, `Move` - stops the app from starting). Run `tools/check_windows_compile.sh` after
+`tools/build.py`; it compiles the shipped code with Microsoft's compiler and warnings-as-errors.
+The launcher also passes `-IgnoreWarnings` as a safety net.

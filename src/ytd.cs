@@ -1016,8 +1016,8 @@ namespace YTD
     // ------------------------------------------------------------------ header: popular site icons + "1000+ more"
     public class SiteStrip : Control
     {
-        public class Site { public string Name, Letter; public Bitmap Img; }
-        public List<Site> Sites = new List<Site>();
+        public class SiteInfo { public string Name, Letter; public Bitmap Img; }
+        public List<SiteInfo> Sites = new List<SiteInfo>();
         public string MoreText = "+ 1000 more sites";
         public event EventHandler MoreClicked;
         int hot = -2; ToolTip tip; Font under;
@@ -1214,7 +1214,14 @@ namespace YTD
             string sa = Clock(Start), sz = Clock(End);
             int wa = TextRenderer.MeasureText(sa, T.Small).Width, wz = TextRenderer.MeasureText(sz, T.Small).Width;
             float la = Math.Max(0, Math.Min(Width - wa, a - wa / 2f)), lz = Math.Max(0, Math.Min(Width - wz, z - wz / 2f));
-            if (lz < la + wa + T.P(4)) { float mid = (a + z) / 2f; la = Math.Max(0, mid - wa - T.P(2)); lz = Math.Min(Width - wz, mid + T.P(2)); }
+            float gap = T.P(6);
+            if (lz < la + wa + gap)
+            {
+                float mid = (a + z) / 2f; la = mid - wa - gap / 2; lz = mid + gap / 2;
+                if (la < 0) { lz -= la; la = 0; }
+                if (lz + wz > Width) { la -= lz + wz - Width; lz = Width - wz; }
+                la = Math.Max(0, la);
+            }
             int ty = (int)(Ty + r + T.P(4));
             TextRenderer.DrawText(g, sa, T.Small, new Point((int)la, ty), k.Muted, TextFormatFlags.NoPadding);
             TextRenderer.DrawText(g, sz, T.Small, new Point((int)lz, ty), k.Muted, TextFormatFlags.NoPadding);
@@ -1225,10 +1232,10 @@ namespace YTD
             float a = Px(Start), z = Px(End), x = e.X;
             if (Math.Abs(x - a) <= T.P(12) || Math.Abs(x - z) <= T.P(12)) drag = Math.Abs(x - a) < Math.Abs(x - z) || (Math.Abs(x - a) == Math.Abs(x - z) && x < a) ? 1 : 2;
             else if (x > a && x < z) { drag = 3; grab = Tm(x) - Start; }
-            else { drag = x < a ? 1 : 2; Move(x); }
+            else { drag = x < a ? 1 : 2; MoveTo(x); }
             Capture = true;
         }
-        void Move(float x)
+        void MoveTo(float x)
         {
             double t = Tm(x), minGap = Math.Min(1.0, Duration / 2);
             if (drag == 1) Start = Math.Min(t, End - minGap);
@@ -1239,7 +1246,7 @@ namespace YTD
         }
         protected override void OnMouseMove(MouseEventArgs e)
         {
-            if (drag != 0) Move(e.X);
+            if (drag != 0) MoveTo(e.X);
             else if (Live) { float a = Px(Start), z = Px(End); Cursor = Math.Abs(e.X - a) <= T.P(12) || Math.Abs(e.X - z) <= T.P(12) ? Cursors.SizeWE : e.X > a && e.X < z ? Cursors.Hand : Cursors.Default; }
             base.OnMouseMove(e);
         }
@@ -1456,7 +1463,7 @@ namespace YTD
                 "Instagram|I|instagram|https://www.instagram.com/favicon.ico", "Facebook|f|facebook|https://www.facebook.com/favicon.ico",
                 "X (Twitter)|X|x|https://x.com/favicon.ico", "Google Drive|D|drive|https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png" })
             {
-                var sp = spec.Split('|'); var site = new SiteStrip.Site(); site.Name = sp[0]; site.Letter = sp[1]; sites.Sites.Add(site);
+                var sp = spec.Split('|'); var site = new SiteStrip.SiteInfo(); site.Name = sp[0]; site.Letter = sp[1]; sites.Sites.Add(site);
                 var st = sites;
                 Pics.Favicon(sp[2], sp[3], iconDir, bmp =>
                 {
@@ -2295,6 +2302,16 @@ namespace YTD
             for (int i = 0; i < col; i++) x += lv.Columns[i].Width;
             return new Rectangle(x, b.Y, lv.Columns[col].Width, b.Height);
         }
+        // shortens text with "..." so it fits the width (doesn't rely on the renderer clipping)
+        static string FitText(string t, Font f, int w)
+        {
+            if (string.IsNullOrEmpty(t) || w <= 0) return w <= 0 ? "" : t;
+            var fl = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine;
+            if (TextRenderer.MeasureText(t, f, Size.Empty, fl).Width <= w) return t;
+            int lo = 0, hi = t.Length;
+            while (lo < hi) { int mid = (lo + hi + 1) / 2; if (TextRenderer.MeasureText(t.Substring(0, mid).TrimEnd() + "\u2026", f, Size.Empty, fl).Width <= w) lo = mid; else hi = mid - 1; }
+            return lo == 0 ? "" : t.Substring(0, lo).TrimEnd() + "\u2026";
+        }
         Rectangle PillRect(Item it, Rectangle cell)
         {
             string lab = ActionLabel(it.Action); if (lab == null) return Rectangle.Empty;
@@ -2340,7 +2357,8 @@ namespace YTD
             {
                 var pr = it != null ? PillRect(it, r) : Rectangle.Empty;
                 int right = pr.IsEmpty ? r.Right - pad : pr.Left - T.P(6);
-                TextRenderer.DrawText(g, e.SubItem.Text, lv.Font, new Rectangle(r.X + pad, r.Y, Math.Max(0, right - r.X - pad), r.Height), e.SubItem.ForeColor, flags);
+                int sw = Math.Max(0, right - r.X - pad);
+                TextRenderer.DrawText(g, FitText(e.SubItem.Text, lv.Font, sw), lv.Font, new Rectangle(r.X + pad, r.Y, sw, r.Height), e.SubItem.ForeColor, flags | TextFormatFlags.EndEllipsis);
                 if (!pr.IsEmpty)
                 {
                     bool off = busy && it.Action != "show";
@@ -3140,12 +3158,13 @@ namespace YTD
                             var psi = new ProcessStartInfo(exe, "--ignore-config --list-extractors");
                             psi.UseShellExecute = false; psi.RedirectStandardOutput = true; psi.CreateNoWindow = true; psi.StandardOutputEncoding = Encoding.UTF8;
                             string outp; using (var pr = Process.Start(psi)) { outp = pr.StandardOutput.ReadToEnd(); pr.WaitForExit(20000); }
-                            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            var seen = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
                             foreach (var line in outp.Split('\n'))
                             {
                                 string t = line.Trim(); if (t == "" || t.Contains("CURRENTLY BROKEN")) continue;
                                 string n = t.Split(':')[0].Trim();
-                                if (n == "" || n.Equals("generic", StringComparison.OrdinalIgnoreCase) || !seen.Add(n)) continue;
+                                if (n == "" || n.Equals("generic", StringComparison.OrdinalIgnoreCase) || seen.ContainsKey(n)) continue;
+                                seen[n] = true;
                                 names.Add(n);
                             }
                             names.Sort(StringComparer.OrdinalIgnoreCase);
