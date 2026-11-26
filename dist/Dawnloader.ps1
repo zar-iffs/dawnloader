@@ -1986,11 +1986,12 @@ namespace YTD
 
         void SyncItems()
         {
-            if (busy) return;
             var urls = CurrentUrls();
             var keep = new List<Item>(); int added = 0;
+            if (busy) keep.AddRange(items); // while downloading, the list can only grow: the running queue keeps its rows
             foreach (var u in urls)
             {
+                if (busy) { bool have = false; foreach (var x in items) if (x.Url == u) { have = true; break; } if (have) continue; }
                 Item found = null;
                 foreach (var it in items) if (it.Url == u) { found = it; break; }
                 if (found == null)
@@ -2002,6 +2003,7 @@ namespace YTD
                 }
                 keep.Add(found);
             }
+            if (busy && added > 0) SetStatus("Added " + (added == 1 ? "1 link" : added + " links") + " - press Download when the current ones finish.", T.Ok);
             foreach (var it in items) if (!keep.Contains(it) && it == fetching && fetchRunner != null) { fetchRunner.Kill(); }
             items = keep;
             lv.BeginUpdate(); lv.Items.Clear(); foreach (var it in items) lv.Items.Add(it.Lvi); lv.EndUpdate();
@@ -2254,7 +2256,7 @@ namespace YTD
                 else { desc = "original \u2192 " + (o.AFmt == "best" ? "audio" : o.AFmt.ToUpperInvariant()); it.Lvi.SubItems[2].Text = it.Est < 0 ? "?" : "\u2264 " + T.Bytes(it.Est); }
                 it.Lvi.ToolTipText = (it.FileName ?? "") + "\nGoogle Drive original file" + (it.Est >= 0 ? ", " + T.Bytes(it.Est) : "") +
                     (o.Video ? "" : "\nAudio is extracted after download, so the final file is smaller.");
-                if (!busy && !it.Done) SetItemStatus(it, desc + (it.UseCookies ? " \u00B7 signed in" : ""), "", it.DonePath != null ? "show" : "");
+                if (!InRun(it) && !it.Done) SetItemStatus(it, desc + (it.UseCookies ? " \u00B7 signed in" : ""), "", it.DonePath != null ? "show" : "");
                 return;
             }
             it.Est = Est.ForItem(it, o, out desc);
@@ -2278,7 +2280,7 @@ namespace YTD
             }
             it.Lvi.SubItems[2].Text = it.Est < 0 ? "?" : (exact ? "" : o.Video ? "\u2248 " : "\u2264 ") + T.Bytes(it.Est);
             if (it.Est >= 0 && it.Est == it.ProbeSize && !o.Video) it.Lvi.SubItems[2].Text = "\u2264 " + T.Bytes(it.Est);
-            if (!busy && !it.Done)
+            if (!InRun(it) && !it.Done)
             {
                 bool allHave = it.IsPlaylist && it.Count > 0 && it.PlHave >= it.Count && !it.ForceAgain;
                 if (it.Archived && !it.HasClip) { it.Lvi.SubItems[2].Text = "0 B"; SetItemStatus(it, "Already downloaded", "", it.DonePath != null && File.Exists(it.DonePath) ? "show" : "again"); }
@@ -2540,11 +2542,14 @@ namespace YTD
             return a;
         }
 
+        // true while this item is part of the download that is running now (links added meanwhile are not)
+        bool InRun(Item it) { return busy && (queue == null || queue.Contains(it)); }
+
         void SetBusy(bool b)
         {
             busy = b;
             btnDownload.Visible = !b; btnCancel.Visible = b; btnUpdate.Enabled = !b;
-            txtLinks.ReadOnly = b; btnPaste.Enabled = !b; btnClear.Enabled = !b;
+            txtLinks.ReadOnly = b; btnClear.Enabled = !b; // Paste stays on: links can be added (not removed) while downloading
             tVideo.Enabled = !b; tAudio.Enabled = !b;
             foreach (Control c in new Control[] { cbQuality, cbContainer, cbAFmt, cbABr, ckSubs, ckThumb, cbCookies, txtOut, btnBrowse }) c.Enabled = !b;
             if (!b) ApplyMode();
@@ -2801,8 +2806,9 @@ namespace YTD
             else
             {
                 bar.Value = 1;
-                int skipped = items.Count - queue.Count;
-                string msg = ok + " done" + (failed > 0 ? ", " + failed + " failed" : "") + (skipped > 0 ? ", " + skipped + " skipped" : "") + ".";
+                int skipped = 0, waiting = 0;
+                foreach (var x in items) if (!queue.Contains(x)) { if ((x.Status ?? "").StartsWith("Skipped")) skipped++; else waiting++; }
+                string msg = ok + " done" + (failed > 0 ? ", " + failed + " failed" : "") + (skipped > 0 ? ", " + skipped + " skipped" : "") + (waiting > 0 ? ", " + waiting + " waiting - press Download" : "") + ".";
                 if (blocked > 0)
                 {
                     msg += " Blocked by YouTube - use the buttons in the Status column.";
@@ -3446,12 +3452,11 @@ namespace YTD
                 if (Catchable(u) && !have.Contains(u) && !add.Contains(u)) add.Add(u);
             }
             if (add.Count == 0) return;
-            if (busy) { SetStatus("Copied link noticed - it can be added after the current downloads finish.", T.Warn); lastClip = null; return; }
             string cur = txtLinks.Text.TrimEnd();
             txtLinks.Text = (cur.Length > 0 ? cur + Environment.NewLine : "") + string.Join(Environment.NewLine, add.ToArray()) + Environment.NewLine;
             txtLinks.SelectionStart = txtLinks.TextLength;
             debounce.Stop(); SyncItems();
-            SetStatus("Caught " + (add.Count == 1 ? "a link" : add.Count + " links") + " from the clipboard.", T.Ok);
+            if (!busy) SetStatus("Caught " + (add.Count == 1 ? "a link" : add.Count + " links") + " from the clipboard.", T.Ok);
         }
 
         // ---------------- skins
